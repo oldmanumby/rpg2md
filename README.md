@@ -7,7 +7,7 @@
 
 **RPG2MD** is an automated conversion tool built to transform tabletop roleplaying game (TTRPG) rulebooks, adventure modules, and supplements into clean, structured **GitHub-flavored Markdown**.
 
-Powered by **Docling v2**, it solves common PDF conversion issues in tabletop gaming books:
+Powered by **[Docling v2](https://docling-project.github.io/docling)**, it solves common PDF conversion issues in tabletop gaming books:
 - **Multi-Column Layout Preservation**: Automatically tracks reading flow across 2-column and 3-column page layouts without jumping across gutters.
 - **High-Resolution Asset Extraction**: Crops battle maps, character portraits, item sketches, and diagrams into standalone high-res images ($1.0\times$ to $4.0\times$ retina scale).
 - **Dynamic Image Naming**: Automatically names extracted images sequentially (`img_001.png`), with custom prefixes (`dnd5e_001.png`), or based on the **preceding section heading** (`combat_rules_001.png`, `ancient_red_dragon_001.png`).
