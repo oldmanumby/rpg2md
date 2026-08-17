@@ -1,0 +1,6 @@
+# Core PDF Parsing & Conversion Engine
+docling>=2.120.0
+
+# Optional OCR Engines
+easyocr>=1.7.0
+ocrmac>=1.0.0; sys_platform == 'darwin'

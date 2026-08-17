@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Temporary files & editor artifacts
+*.tmp
+*.log
+_temp_assets_*/
+.idea/
+.vscode/
+*.swp
+
+# Input & Output data (prevents tracking heavy PDFs and converted outputs)
+_input/*
+!_input/.gitkeep
+_output/*
+!_output/.gitkeep
