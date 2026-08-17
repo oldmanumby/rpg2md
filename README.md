@@ -70,9 +70,9 @@ pip install -r requirements.txt
 2. Run the script:
 
 ```bash
-python rpg2md.py
+./.venv/bin/python rpg2md.py
 ```
-*(Or invoke via the virtual environment directly: `./.venv/bin/python rpg2md.py`)*
+*(On Windows: `.\.venv\Scripts\python rpg2md.py`)*
 
 > **Default Settings Applied:**
 > - **Page Range:** All Pages.
@@ -89,8 +89,9 @@ python rpg2md.py
 If you want to configure settings interactively before converting, launch the numbered setup wizard:
 
 ```bash
-python rpg2md.py -i
+./.venv/bin/python rpg2md.py -i
 ```
+*(On Windows: `.\.venv\Scripts\python rpg2md.py -i`)*
 
 The wizard guides you through:
 ```text
@@ -166,7 +167,7 @@ Overwrite existing files in _output/? (y/N):
 You can pass command-line arguments directly to automate batch jobs:
 
 ```bash
-python rpg2md.py [OPTIONS]
+./.venv/bin/python rpg2md.py [OPTIONS]
 ```
 
 | Flag | Type / Choices | Default | Description |
@@ -201,37 +202,37 @@ python rpg2md.py [OPTIONS]
 
 ### 1. Modern Digital Books (Fastest Execution)
 ```bash
-python rpg2md.py
+./.venv/bin/python rpg2md.py
 ```
 
 ### 2. Heading-Based Image Naming
 Names all artwork after the section it appears under (e.g. `combat_rules_001.png`, `ancient_red_dragon_001.png`):
 ```bash
-python rpg2md.py --naming-scheme heading
+./.venv/bin/python rpg2md.py --naming-scheme heading
 ```
 
 ### 3. Convert a Specific Chapter or Page Range (e.g. Pages 10 to 25)
 ```bash
-python rpg2md.py --file "Rulebook.pdf" --pages 10-25
+./.venv/bin/python rpg2md.py --file "Rulebook.pdf" --pages 10-25
 ```
 
 ### 4. Apple Silicon Neural OCR (macOS)
 ```bash
-python rpg2md.py --ocr apple --scale 3.0
+./.venv/bin/python rpg2md.py --ocr apple --scale 3.0
 ```
 
 ### 5. Weathered / Vintage Scans (OSR, AD&D 1E/2E, Zines)
 ```bash
 # Using EasyOCR with full-page raster scanning
-python rpg2md.py --ocr easyocr --force-ocr
+./.venv/bin/python rpg2md.py --ocr easyocr --force-ocr
 
 # Using Local DeepSeek-OCR GGUF via llama-server / LM Studio
-python rpg2md.py --ocr local --ocr-model "deepseek-ocr-2" --force-ocr
+./.venv/bin/python rpg2md.py --ocr local --ocr-model "deepseek-ocr-2" --force-ocr
 ```
 
 ### 6. Local Vision AI for Fantasy Image Alt-Text (Qwen2.5-VL)
 ```bash
-python rpg2md.py --vlm local --vlm-model "Qwen2.5-VL-7B-Instruct-GGUF" --vlm-words 5
+./.venv/bin/python rpg2md.py --vlm local --vlm-model "Qwen2.5-VL-7B-Instruct-GGUF" --vlm-words 5
 ```
 
 ---
