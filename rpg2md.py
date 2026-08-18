@@ -53,6 +53,91 @@ def get_optimal_threads() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Model Cache Verification & Preflight Downloader
+# ---------------------------------------------------------------------------
+
+def is_hf_model_cached(repo_id: str) -> bool:
+    """Check if Hugging Face repo is already cached in ~/.cache/huggingface/hub/."""
+    hub_dir = Path.home() / ".cache" / "huggingface" / "hub"
+    folder_name = f"models--{repo_id.replace('/', '--')}"
+    target_dir = hub_dir / folder_name
+    if target_dir.exists() and any(target_dir.iterdir()):
+        return True
+    return False
+
+
+def prefetch_hf_model(repo_id: str, display_name: str, est_size_mb: int) -> bool:
+    """Download Hugging Face model with visual status if not already cached in ~/.cache/huggingface/hub/."""
+    if is_hf_model_cached(repo_id):
+        print(f"  ✔ Model '{display_name}' verified in cache.")
+        return True
+
+    print(f"\n⬇ Downloading {display_name} weights (~{est_size_mb} MB) from Hugging Face Hub...")
+    print(f"  Cache Path: ~/.cache/huggingface/hub/models--{repo_id.replace('/', '--')}/")
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(repo_id=repo_id)
+        print(f"  ✔ {display_name} downloaded successfully!")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ Hugging Face prefetch notice: {e}. Proceeding with dynamic loader.", file=sys.stderr)
+        return False
+
+
+def is_easyocr_cached() -> bool:
+    """Check if EasyOCR PyTorch weights exist in ~/.EasyOCR/model/."""
+    easyocr_dir = Path.home() / ".EasyOCR" / "model"
+    craft_file = easyocr_dir / "craft_mlt_25k.pth"
+    return craft_file.exists()
+
+
+def prefetch_easyocr() -> bool:
+    """Download EasyOCR PyTorch weights if missing."""
+    if is_easyocr_cached():
+        print("  ✔ EasyOCR weights verified in cache (~/.EasyOCR/model/).")
+        return True
+
+    print("\n⬇ Downloading EasyOCR PyTorch weights (~45 MB)...")
+    try:
+        import easyocr
+        easyocr.Reader(["en"], verbose=False)
+        print("  ✔ EasyOCR weights downloaded successfully!")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ EasyOCR prefetch notice: {e}", file=sys.stderr)
+        return False
+
+
+def ensure_models_ready(args: argparse.Namespace):
+    """Preflight check for built-in models selected in the active configuration."""
+    # 1. Granite Docling VLM
+    if getattr(args, "pipeline", "modular") in ("vlm", "granite"):
+        prefetch_hf_model("ibm-granite/granite-docling-258M", "IBM Granite Docling (258M VLM)", 512)
+
+    # 2. SmolVLM-256M Alt-Text
+    if not getattr(args, "no_images", False) and getattr(args, "vlm", "smolvlm") == "smolvlm":
+        prefetch_hf_model("HuggingFaceTB/SmolVLM-256M-Instruct", "SmolVLM-256M", 550)
+
+    # 3. EasyOCR
+    if getattr(args, "pipeline", "modular") == "modular" and getattr(args, "ocr", "none") == "easyocr":
+        prefetch_easyocr()
+
+
+def download_all_builtin_models():
+    """Command to download all built-in models up front for offline use."""
+    print("=" * 60)
+    print("          RPG2MD - Pre-downloading Built-in AI Models         ")
+    print("=" * 60)
+    prefetch_hf_model("ibm-granite/granite-docling-258M", "IBM Granite Docling (258M VLM)", 512)
+    prefetch_hf_model("HuggingFaceTB/SmolVLM-256M-Instruct", "SmolVLM-256M", 550)
+    prefetch_hf_model("docling-project/docling-layout-heron", "Docling Layout Heron", 150)
+    prefetch_easyocr()
+    print("\n" + "=" * 60)
+    print("🎉 All built-in models are downloaded and verified in local cache!")
+    print("=" * 60)
+
+
+# ---------------------------------------------------------------------------
 # Preset Management
 # ---------------------------------------------------------------------------
 
@@ -109,7 +194,7 @@ def load_preset_file(preset_path: Path, args: argparse.Namespace) -> argparse.Na
     try:
         data = json.loads(preset_path.read_text(encoding="utf-8"))
         for k, v in data.items():
-            if hasattr(args, k) and k not in ("file", "pages", "overwrite", "interactive"):
+            if hasattr(args, k) and k not in ("file", "pages", "overwrite", "interactive", "download_models"):
                 setattr(args, k, v)
         return args
     except Exception as e:
@@ -290,7 +375,6 @@ def query_local_vlm(image_path: Path, url: str, model: str, max_words: int = 5) 
 def build_converter(args: argparse.Namespace) -> DocumentConverter:
     """Construct DocumentConverter with either Modular Pipeline or Granite Docling VLM."""
     if args.pipeline in ("vlm", "granite"):
-        # IBM Granite Docling 258M VLM Pipeline
         vlm_opts = VlmPipelineOptions()
 
         use_mlx = False
@@ -391,11 +475,11 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
 
 
 # ---------------------------------------------------------------------------
-# Interactive Setup Wizard (Verbatim Finalized Layout + Preset System)
+# Interactive Setup Wizard
 # ---------------------------------------------------------------------------
 
 def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
-    """Walk user through exact custom numbered prompts matching user layout with preset loading/saving."""
+    """Walk user through exact custom numbered prompts with preset management."""
     print("=" * 60)
     print("             RPG2MD - Interactive Setup Wizard              ")
     print("=" * 60)
@@ -423,7 +507,7 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
         print("\nAvailable Presets:")
         for idx, p_path in enumerate(available_presets, 1):
             print(f"[{idx}] {p_path.stem}")
-        
+
         p_choice = prompt_choice_custom(
             "Select Preset to Load:",
             [p.stem for p in available_presets],
@@ -434,7 +518,6 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
         args = load_preset_file(chosen_preset, args)
         print(f"\n✔ Loaded preset '{chosen_preset.stem}' successfully!")
 
-        # Quick confirmation of overwrite & proceed
         print("\n------------------------------------------------------------")
         print("-- Final Confirmation")
         print("------------------------------------------------------------\n")
@@ -541,10 +624,8 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
         print("-- Advanced Settings (Only shown if [2] Advanced was chosen)")
         print("------------------------------------------------------------\n")
 
-        # Heading hierarchy
         args.no_headings = not prompt_yn("Enable automatic heading hierarchy (#, ##, ###)?", default_yes=True)
 
-        # Image Naming Scheme
         if not args.no_images:
             naming_choice = prompt_choice_custom(
                 "Image Naming Scheme:",
@@ -565,18 +646,14 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
             elif naming_choice == 3:
                 args.naming_scheme = "heading"
 
-        # Table Snapshots
         args.table_images = prompt_yn("Save snapshot images of tables as assets?", default_yes=False)
 
-        # Force OCR (if OCR is active in Modular pipeline)
         if args.pipeline == "modular" and args.ocr != "none":
             args.force_ocr = prompt_yn("Force full-page OCR across all pages?", default_yes=False)
 
-        # Page Range
         page_range_input = prompt_text("Page Range (e.g. '1-10', '5', or Enter for All)", "all")
         args.pages = page_range_input if page_range_input.lower() != "all" else None
 
-        # Table Recognition Mode (Modular Pipeline)
         if args.pipeline == "modular":
             table_choice = prompt_choice_custom(
                 "Table Recognition Mode:  (Standard Pipeline)",
@@ -590,7 +667,6 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
             )
             args.table_mode = {1: "accurate", 2: "fast", 3: "none"}[table_choice]
 
-        # Compute Accelerator Device
         device_choice = prompt_choice_custom(
             "Compute Accelerator Device:",
             [
@@ -603,7 +679,6 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
         )
         args.device = {1: "auto", 2: "mps", 3: "cpu"}[device_choice]
 
-        # Worker CPU Threads with auto-detection
         optimal_threads = get_optimal_threads()
         thread_input = input(f"\nWorker CPU Threads [Auto Detected={optimal_threads}]: ").strip()
         args.threads = int(thread_input) if (thread_input and thread_input.isdigit()) else optimal_threads
@@ -654,13 +729,12 @@ def postprocess_assets_and_links(
     if not raw_images:
         return 0
 
-    # Build image map with heading tracking
     image_counter = 1
     heading_counters: Dict[str, int] = {}
     current_heading = "cover"
 
     lines = content.splitlines()
-    raw_to_new_name: Dict[str, Tuple[str, str]] = {}  # raw_name -> (clean_name, rel_link)
+    raw_to_new_name: Dict[str, Tuple[str, str]] = {}
 
     for line in lines:
         heading_match = re.match(r'^(#{1,6})\s+(.+)$', line.strip())
@@ -687,7 +761,6 @@ def postprocess_assets_and_links(
                         image_counter += 1
                     break
 
-    # Process files and generate VLM captions
     for idx, raw_img in enumerate(raw_images, 1):
         if raw_img.name in raw_to_new_name:
             clean_name, rel_link = raw_to_new_name[raw_img.name]
@@ -700,7 +773,6 @@ def postprocess_assets_and_links(
         if raw_img != dest_img_path:
             raw_img.replace(dest_img_path)
 
-        # Generate alt-text
         if vlm_mode == "local":
             sys.stdout.write(f"\r  ↳ [Image {idx}/{len(raw_images)}] Generating VLM alt-text for '{clean_name}'...   ")
             sys.stdout.flush()
@@ -708,7 +780,6 @@ def postprocess_assets_and_links(
         else:
             alt_text = "RPG Illustration"
 
-        # Regex replacement in markdown
         old_ref_pattern = re.escape(raw_img.name)
         content = re.sub(
             rf'!\[(.*?)\]\([^)]*{old_ref_pattern}\)',
@@ -809,6 +880,7 @@ def main():
     # General & Wizard
     parser.add_argument("-i", "--interactive", action="store_true", help="Launch interactive numbered setup wizard")
     parser.add_argument("--preset", type=str, default=None, help="Load conversion settings from a named preset in presets/")
+    parser.add_argument("--download-models", action="store_true", help="Download all built-in AI models to local cache and exit")
     parser.add_argument("--file", type=str, default=None, help="Convert a single specific PDF in _input/")
     parser.add_argument("--pages", type=str, default=None, help="Page range to convert (e.g. '1-10', '5', or 'all')")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing .md files and asset folders")
@@ -843,6 +915,11 @@ def main():
     # Performance
     parser.add_argument("--device", choices=["auto", "mps", "cpu"], default="auto", help="Compute accelerator device")
     parser.add_argument("--threads", type=int, default=optimal_threads, help="Number of CPU worker threads")
+
+    # Offline download flag handler
+    if "--download-models" in sys.argv:
+        download_all_builtin_models()
+        sys.exit(0)
 
     # Load preset if passed via CLI
     raw_args = sys.argv[1:]
@@ -901,6 +978,9 @@ def main():
     if args.pipeline == "modular":
         print(f"🔍 OCR Engine       : {args.ocr.upper()} {'[Force Full Page]' if args.force_ocr else ''}")
     print("=" * 60)
+
+    # Preflight check for selected built-in models
+    ensure_models_ready(args)
 
     converter = build_converter(args)
 

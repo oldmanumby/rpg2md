@@ -10,6 +10,7 @@
 Powered by **Docling v2** and **IBM Granite Docling (258M VLM)**, it solves the most common PDF conversion hurdles in tabletop gaming books:
 - **Dual Pipeline Architecture**: Choose between the blazing-fast **Modular Pipeline** (for modern digital rulebooks) or the end-to-end **VLM Passover** via IBM Granite Docling 258M (for tricky scans, warped pages, and complex visual sidebars).
 - **Preset Management System**: Save your customized wizard settings as named `.json` presets in `./presets/` and recall them instantly via wizard or CLI flag.
+- **Automated Model Preflight**: Built-in models (**Granite Docling 258M**, **SmolVLM**, **EasyOCR**) are automatically verified in `~/.cache/huggingface/hub/` and downloaded on-demand with visual status rather than pausing silently.
 - **Multi-Column Layout Preservation**: Accurately tracks reading flow across 2-column and 3-column layouts without jumping across gutters.
 - **Isolated Asset Extraction**: Crops battle maps, character portraits, item sketches, and diagrams into clean, high-resolution standalone images ($1.0\times$ to $4.0\times$ retina scale) inside dedicated folders: `_output/<DocName>/`.
 - **Dynamic Image Naming**: Automatically names extracted images sequentially (`img_001.png`), with custom prefixes (`dnd5e_001.png`), or based on the **preceding section heading** (`combat_rules_001.png`, `ancient_red_dragon_001.png`).
@@ -67,6 +68,12 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+### 4. (Optional) Pre-download Built-in AI Models for Offline Use
+```bash
+./.venv/bin/python rpg2md.py --download-models
+```
+*(On Windows: `.\.venv\Scripts\python rpg2md.py --download-models`)*
 
 ---
 
@@ -216,6 +223,7 @@ Run directly from terminal without prompts:
 | :--- | :--- | :---: | :--- |
 | `-i`, `--interactive` | *flag* | `False` | Explicitly launch the interactive wizard. |
 | `--preset <name>` | *string* | `None` | Load settings from a named preset in `./presets/`. |
+| `--download-models` | *flag* | `False` | Download all built-in AI models to local cache and exit. |
 | `--file <filename>` | *string* | `None` | Process only a specific PDF in `_input/`. |
 | `--pages <range>` | *string* | `None` | Page range to convert (e.g. `--pages 1-10` or `--pages 5`). |
 | `--pipeline` | `modular` \| `granite` \| `vlm` | `modular` | `modular` uses fast vector parsing + TableFormer; `granite` uses IBM Granite Docling 258M VLM. |
@@ -276,16 +284,16 @@ Names all artwork after the section it appears under (e.g. `combat_rules_001.png
 
 ---
 
-## 🧠 OCR & Vision Models: Architecture Guide
+## 🧠 OCR & Vision Models: Architecture & Cache Guide
 
-| Engine / Model | Type | How It Runs & Where It Is Installed |
-| :--- | :--- | :--- |
-| **IBM Granite Docling (258M)** | End-to-End Vision Model | Single-pass neural parsing via DocTags (MLX / PyTorch). |
-| **Docling Default (RapidOCR)** | ONNX Computer Vision | Pre-installed via `docling`. Fast baseline for standard text. |
-| **Apple Vision (`ocrmac`)** | macOS Native Vision Framework | Accelerated on Apple Silicon Neural Engine (macOS only). |
-| **EasyOCR** | PyTorch (CRAFT + ResNet) | Python library for weathered, parchment, or noisy scans. |
-| **SmolVLM-256M** | Compact Vision-Language Model | Automatic via Hugging Face `transformers` for image alt-text. |
-| **DeepSeek-OCR-2 / Qwen2.5-VL** | Frontier Vision-Language Model | Served locally via **LM Studio / Unsloth / `llama-server`** at `http://127.0.0.1:8888/v1`. |
+| Engine / Model | Type | Cache Location | How It Is Managed |
+| :--- | :--- | :--- | :--- |
+| **IBM Granite Docling (258M)** | End-to-End Vision Model | `~/.cache/huggingface/hub/models--ibm-granite--granite-docling-258M/` | Verified & downloaded on first run via `huggingface_hub`. |
+| **SmolVLM-256M** | Compact Vision Model | `~/.cache/huggingface/hub/models--HuggingFaceTB--SmolVLM-256M-Instruct/` | Verified & downloaded on first run for image alt-text. |
+| **Docling Layout Heron** | CNN Layout Detector | `~/.cache/huggingface/hub/models--docling-project--docling-layout-heron/` | Auto-cached by Docling for multi-column parsing. |
+| **EasyOCR** | PyTorch (CRAFT + ResNet) | `~/.EasyOCR/model/` | PyTorch neural network weights for legacy scans. |
+| **Apple Vision (`ocrmac`)** | macOS Native Framework | **0 MB** (Built into macOS) | Native Apple Silicon Neural Engine execution. |
+| **DeepSeek-OCR-2 / Qwen2.5-VL** | Frontier VLM (GGUF) | User-managed endpoint | Served locally via **LM Studio / Unsloth / `llama-server`** at `http://127.0.0.1:8888/v1`. |
 
 ---
 

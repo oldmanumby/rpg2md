@@ -5,6 +5,14 @@ All notable changes to the RPG2MD project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-18
+
+### Added
+- Added **Automated Model Preflight Verification**: Automatically checks `~/.cache/huggingface/hub/` and `~/.EasyOCR/model/` for required model weights before conversion begins.
+- Added visual download progress reporting for first-run downloads of IBM Granite Docling 258M, SmolVLM-256M, and EasyOCR.
+- Added **`--download-models` CLI flag** allowing users to pre-download all built-in AI models up front for offline use.
+- Documented cache architecture and directory paths in `README.md`.
+
 ## [1.2.0] - 2026-08-18
 
 ### Added
