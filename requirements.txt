@@ -1,6 +1,9 @@
-# Core PDF Parsing & Conversion Engine
+# Core PDF Parsing & Conversion Engine (includes IBM Granite Docling VLM support)
 docling>=2.120.0
 
-# Optional OCR Engines
+# Optional OCR & Vision Engines
 easyocr>=1.7.0
 ocrmac>=1.0.0; sys_platform == 'darwin'
+
+# Optional: Apple Silicon MLX Acceleration for Granite Docling VLM
+# mlx-vlm>=0.1.0; sys_platform == 'darwin'
