@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
 rpg2md.py - RPG PDF to GitHub-Flavored Markdown Converter
-Powered by Docling, Apple Vision, and Local Vision-Language Models (VLM).
+Powered by Docling v2, IBM Granite Docling VLM, Apple Vision, and Local VLMs.
 
-Converts PDFs in `_input/` to Markdown in `_output/`, extracting images
-sequentially into `_output/_assets/` with AI-generated alt-text descriptions.
+Converts tabletop RPG PDFs in `_input/` to clean Markdown in `_output/`,
+extracting high-res images into `_output/<DocName>/` with AI alt-text.
 """
 
 import argparse
 import base64
+import itertools
 import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -20,6 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 # Docling Imports
+from docling.datamodel import vlm_model_specs
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
     AcceleratorOptions,
@@ -27,14 +30,26 @@ from docling.datamodel.pipeline_options import (
     HeadingHierarchyOptions,
     OcrMacOptions,
     PdfPipelineOptions,
-    PictureDescriptionBaseOptions,
     RapidOcrOptions,
     TableFormerMode,
     TableStructureOptions,
     TesseractOcrOptions,
+    VlmPipelineOptions,
 )
 from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
+from docling.pipeline.vlm_pipeline import VlmPipeline
 from docling_core.types.doc import ImageRefMode
+
+
+# ---------------------------------------------------------------------------
+# Hardware & Environment Detection
+# ---------------------------------------------------------------------------
+
+def get_optimal_threads() -> int:
+    """Detect available CPU cores and calculate optimal worker threads."""
+    cores = os.cpu_count() or 4
+    return max(1, cores - 2) if cores > 4 else cores
 
 
 # ---------------------------------------------------------------------------
@@ -45,13 +60,12 @@ def prompt_choice_custom(
     title: str,
     options: List[str],
     default_idx: int = 1,
-    prompt_label: str = "Choice [1]: "
+    prompt_label: str = "Choice [DEFAULT=1]: "
 ) -> int:
-    """Prompt user with a list of formatted options and custom prompt label."""
+    """Prompt user with formatted options and custom prompt label."""
     print(f"\n{title}")
     for idx, opt in enumerate(options, 1):
-        marker = " [DEFAULT]" if (idx == default_idx and "[DEFAULT]" not in opt) else ""
-        print(f"[{idx}] {opt}{marker}")
+        print(f"[{idx}] {opt}")
 
     while True:
         choice = input(prompt_label).strip()
@@ -62,10 +76,11 @@ def prompt_choice_custom(
         print(f"Invalid selection. Please enter a number between 1 and {len(options)}.")
 
 
-def prompt_text(title: str, default: str = "") -> str:
+def prompt_text(title: str, default: str = "", prompt_prefix: str = "") -> str:
     """Prompt user for text input with optional default value."""
-    default_str = f" [{default}]" if default else ""
-    val = input(f"{title}{default_str}: ").strip()
+    prefix = f"{prompt_prefix} " if prompt_prefix else ""
+    default_str = f" [DEFAULT={default}]" if default else ""
+    val = input(f"{prefix}{title}{default_str}: ").strip()
     return val if val else default
 
 
@@ -80,7 +95,6 @@ def prompt_yn(title: str, default_yes: bool = True) -> bool:
 
 def slugify(text: str, max_length: int = 35) -> str:
     """Convert any heading text (chapters, monsters, spells, rules, appendices) into a clean snake_case filename slug."""
-    # Strip HTML entities, markdown markers, and punctuation
     text = re.sub(r'&[a-zA-Z0-9#]+;', '', text)
     text = re.sub(r'[#*_`\[\]()\'"<>:?,.!/\\|~+={}$^]', '', text)
     text = re.sub(r'[-\s]+', '_', text).strip('_').lower()
@@ -94,7 +108,7 @@ def parse_page_range(range_str: Optional[str]) -> Tuple[int, int]:
     """Parse strings like '1-10', '5', or 'all' into a (start, end) tuple for Docling."""
     if not range_str or range_str.strip().lower() in ("all", "*", ""):
         return (1, 9223372036854775807)
-    
+
     clean = range_str.strip()
     if "-" in clean:
         parts = clean.split("-")
@@ -107,8 +121,49 @@ def parse_page_range(range_str: Optional[str]) -> Tuple[int, int]:
     elif clean.isdigit():
         page = int(clean)
         return (max(1, page), max(1, page))
-    
+
     return (1, 9223372036854775807)
+
+
+# ---------------------------------------------------------------------------
+# Live Terminal Heartbeat Spinner
+# ---------------------------------------------------------------------------
+
+class LiveActivityStatus:
+    """Background thread displaying animated spinner and elapsed seconds so process never looks frozen."""
+
+    def __init__(self, message: str):
+        self.message = message
+        self.stop_event = threading.Event()
+        self.thread = None
+        self.start_time = None
+
+    def _spin(self):
+        spinner = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+        while not self.stop_event.is_set():
+            elapsed = int(time.time() - self.start_time)
+            mins, secs = divmod(elapsed, 60)
+            time_str = f"{mins:02d}:{secs:02d}"
+            sys.stdout.write(f"\r  {next(spinner)} [{time_str} elapsed] {self.message}   ")
+            sys.stdout.flush()
+            time.sleep(0.15)
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
+
+    def __enter__(self):
+        self.start_time = time.time()
+        self.stop_event.clear()
+        self.thread = threading.Thread(target=self._spin, daemon=True)
+        self.thread.start()
+        return self
+
+    def update_message(self, message: str):
+        self.message = message
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop_event.set()
+        if self.thread:
+            self.thread.join()
 
 
 # ---------------------------------------------------------------------------
@@ -164,22 +219,57 @@ def query_local_vlm(image_path: Path, url: str, model: str, max_words: int = 5) 
 
 
 # ---------------------------------------------------------------------------
-# Pipeline Options Builder
+# Converter & Pipeline Options Builder
 # ---------------------------------------------------------------------------
 
-def build_pipeline_options(args: argparse.Namespace) -> PdfPipelineOptions:
-    """Assemble Docling PdfPipelineOptions based on CLI / Wizard parameters."""
+def build_converter(args: argparse.Namespace) -> DocumentConverter:
+    """Construct DocumentConverter with either Modular Pipeline or Granite Docling VLM."""
+    if args.pipeline in ("vlm", "granite"):
+        # IBM Granite Docling 258M VLM Pipeline
+        vlm_opts = VlmPipelineOptions()
+        
+        # Check for Apple Silicon MLX availability
+        use_mlx = False
+        if args.device == "mps" or args.device == "auto":
+            try:
+                import mlx.core
+                use_mlx = True
+            except ImportError:
+                use_mlx = False
+
+        if use_mlx:
+            vlm_opts.vlm_options = vlm_model_specs.GRANITEDOCLING_MLX
+        else:
+            vlm_opts.vlm_options = vlm_model_specs.GRANITEDOCLING_TRANSFORMERS
+
+        # Hardware options
+        vlm_opts.accelerator_options = AcceleratorOptions(
+            device=args.device if args.device != "auto" else "mps",
+            num_threads=args.threads
+        )
+        vlm_opts.generate_picture_images = not args.no_images
+        vlm_opts.images_scale = args.scale
+
+        return DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(
+                    pipeline_cls=VlmPipeline,
+                    pipeline_options=vlm_opts,
+                )
+            }
+        )
+
+    # Standard Modular Pipeline
     opts = PdfPipelineOptions()
 
     # 1. Images & Assets
     opts.generate_picture_images = not args.no_images
     opts.images_scale = args.scale
 
-    # 2. Vision AI (Alt-Text)
+    # 2. Vision AI (Alt-Text) with clean generation parameters (avoids deprecation warnings)
     if not args.no_images and args.vlm == "smolvlm":
         opts.do_picture_description = True
         opts.picture_description_options.prompt = f"Describe this RPG art or map in {args.vlm_words} words or less."
-        opts.picture_description_options.generation_config["max_new_tokens"] = args.vlm_words * 4
     else:
         opts.do_picture_description = False
 
@@ -233,15 +323,22 @@ def build_pipeline_options(args: argparse.Namespace) -> PdfPipelineOptions:
         num_threads=args.threads
     )
 
-    return opts
+    return DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_cls=StandardPdfPipeline,
+                pipeline_options=opts
+            )
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
-# Interactive Wizard
+# Interactive Setup Wizard (Verbatim Finalized Layout)
 # ---------------------------------------------------------------------------
 
 def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
-    """Walk user through exact custom numbered prompts."""
+    """Walk user through exact custom numbered prompts matching user layout."""
     print("=" * 60)
     print("             RPG2MD - Interactive Setup Wizard              ")
     print("=" * 60)
@@ -250,26 +347,38 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
     mode_choice = prompt_choice_custom(
         "Select Wizard Mode:",
         [
-            "Standard Setup (Essential settings) [DEFAULT]",
+            "Standard Setup (Essential settings)",
             "Advanced Setup (More granular control)"
         ],
         default_idx=1,
-        prompt_label="Choice [ENTER=1]: "
+        prompt_label="Choice [DEFAULT=1]: "
     )
     is_advanced = (mode_choice == 2)
 
-    # 2. Image Resolution Scale
+    # 2. Pipeline Engine
+    pipeline_choice = prompt_choice_custom(
+        "Select Pipeline Engine:",
+        [
+            "Modular Pipeline (Fastest vector text + OCR; best for modern PDFs)",
+            "VLM Passover (End-to-end neural vision; best for complex/legacy/scans)"
+        ],
+        default_idx=1,
+        prompt_label="Choice [DEFAULT=1]: "
+    )
+    args.pipeline = "modular" if pipeline_choice == 1 else "granite"
+
+    # 3. Image Resolution Scale
     scale_choice = prompt_choice_custom(
         "Image Resolution Scale:",
         [
-            "3.0x Higher Resolution [DEFAULT]",
+            "3.0x Higher Resolution",
             "2.0x Standard Resolution",
             "1.0x Lower-Resolution",
             "Custom Scale Factor",
             "Discard all images"
         ],
         default_idx=1,
-        prompt_label="Choice [1]: "
+        prompt_label="Choice [DEFAULT=1]: "
     )
     if scale_choice == 1:
         args.scale = 3.0
@@ -281,77 +390,70 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
         args.scale = 1.0
         args.no_images = False
     elif scale_choice == 4:
-        args.scale = float(prompt_text("Enter Custom Scale Factor", "3.0"))
+        args.scale = float(prompt_text("Enter Custom Scale Factor", "3.0", prompt_prefix="   ↳"))
         args.no_images = False
     elif scale_choice == 5:
         args.no_images = True
 
-    # 3. Vision AI for Image Descriptions (Alt-Text)
+    # 4. Vision AI for Image Descriptions (Alt-Text)
     if not args.no_images:
         vlm_choice = prompt_choice_custom(
             "Vision AI for Image Descriptions (Alt-Text):",
             [
-                "SmolVLM-256M (Fastest built-in model) [DEFAULT]",
+                "SmolVLM-256M (Fastest built-in model)",
                 "Local LLM via Endpoint (e.g. Qwen2.5-VL)",
                 "None: Standard `![Image](link)`"
             ],
             default_idx=1,
-            prompt_label="Choice [1]: "
+            prompt_label="Choice [DEFAULT=1]: "
         )
         if vlm_choice == 1:
             args.vlm = "smolvlm"
             args.vlm_words = 5
         elif vlm_choice == 2:
             args.vlm = "local"
-            args.vlm_url = prompt_text("Local VLM Endpoint URL", args.vlm_url)
-            args.vlm_model = prompt_text("Model Name", args.vlm_model)
-            args.vlm_words = int(prompt_text("Max Words per Alt-Text", "5"))
+            args.vlm_url = prompt_text("Local VLM Endpoint URL (e.g. http://127.0.0.1:8888/v1)", args.vlm_url, prompt_prefix="       ↳")
+            args.vlm_model = prompt_text("Local Model ID (e.g. Qwen2.5-VL-7B-Instruct-GGUF)", args.vlm_model, prompt_prefix="       ↳")
+            args.vlm_words = int(prompt_text("Max Words per Alt-Text", "5", prompt_prefix="       ↳"))
         elif vlm_choice == 3:
             args.vlm = "none"
     else:
         args.vlm = "none"
 
-    # 4. OCR Engine
-    ocr_choice = prompt_choice_custom(
-        "OCR Engine:",
-        [
-            "None (Digital text; fastest, most accurate for modern PDFs) [DEFAULT]",
-            "Docling Default (Built-in RapidOCR; good for majority of PDFs)",
-            "Apple Vision Framework (Neural Engine; better OCR accuracy)",
-            "EasyOCR (Built-in PyTorch; best for legacy PDFs/scans)",
-            "Local LLM via Endpoint (e.g. DeepSeek-OCR)"
-        ],
-        default_idx=1,
-        prompt_label="Choice [1]: "
-    )
-    ocr_map = {1: "none", 2: "docling", 3: "apple", 4: "easyocr", 5: "local"}
-    args.ocr = ocr_map[ocr_choice]
+    # 5. OCR Engine (Shown for Modular Pipeline)
+    if args.pipeline == "modular":
+        ocr_choice = prompt_choice_custom(
+            "OCR Engine:  (Shown for Standard Pipeline)",
+            [
+                "None (Digital text; fastest, most accurate for modern PDFs)",
+                "Docling Default (Built-in RapidOCR; good for majority of PDFs)",
+                "Apple Vision Framework (Neural Engine; better OCR accuracy)",
+                "EasyOCR (Built-in PyTorch; best for legacy PDFs/scans)",
+                "Local LLM via Endpoint (e.g. DeepSeek-OCR)"
+            ],
+            default_idx=1,
+            prompt_label="Choice [DEFAULT=1]: "
+        )
+        ocr_map = {1: "none", 2: "docling", 3: "apple", 4: "easyocr", 5: "local"}
+        args.ocr = ocr_map[ocr_choice]
 
-    if args.ocr == "local":
-        args.ocr_url = prompt_text("Local OCR Endpoint URL", args.ocr_url)
-        args.ocr_model = prompt_text("Local OCR Model Name", args.ocr_model)
+        if args.ocr == "local":
+            args.ocr_url = prompt_text("Local OCR Endpoint URL (e.g. http://127.0.0.1:8888/v1)", args.ocr_url, prompt_prefix="       ↳")
+            args.ocr_model = prompt_text("Local OCR Model ID (e.g. deepseek-ocr-2)", args.ocr_model, prompt_prefix="       ↳")
+    else:
+        args.ocr = "none"
 
-    # 5. Advanced Settings
+    # 6. Advanced Settings
     if is_advanced:
-        print("\n-- Advanced Settings --\n")
+        print("\n------------------------------------------------------------")
+        print("-- Advanced Settings (Only shown if [2] Advanced was chosen)")
+        print("------------------------------------------------------------\n")
 
         # Heading hierarchy
         args.no_headings = not prompt_yn("Enable automatic heading hierarchy (#, ##, ###)?", default_yes=True)
 
-        # Asset Directory Organization
+        # Image Naming Scheme
         if not args.no_images:
-            asset_choice = prompt_choice_custom(
-                "Asset Directory Organization:",
-                [
-                    "Seperate Assets Folder (_output/_assets/<DocName>/img_001.png) [DEFAULT]",
-                    "Shared Assets Folder (_output/_assets/<DocName>_001.png)"
-                ],
-                default_idx=1,
-                prompt_label="Choice [1]: "
-            )
-            args.asset_layout = "per-doc" if asset_choice == 1 else "shared"
-
-            # Image Naming Scheme
             naming_choice = prompt_choice_custom(
                 "Image Naming Scheme:",
                 [
@@ -360,58 +462,64 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
                     '"<PreviousHeading>_001.png"'
                 ],
                 default_idx=1,
-                prompt_label="Choice [1]: "
+                prompt_label="Choice [DEFAULT=1]: "
             )
             if naming_choice == 1:
                 args.naming_scheme = "sequential"
                 args.custom_prefix = "img"
             elif naming_choice == 2:
                 args.naming_scheme = "custom"
-                args.custom_prefix = prompt_text("Enter Custom Prefix", "art")
+                args.custom_prefix = prompt_text("Enter Custom Prefix", "img", prompt_prefix="   ↳")
             elif naming_choice == 3:
                 args.naming_scheme = "heading"
 
         # Table Snapshots
         args.table_images = prompt_yn("Save snapshot images of tables as assets?", default_yes=False)
 
-        # Force OCR (if OCR is active)
-        if args.ocr != "none":
+        # Force OCR (if OCR is active in Modular pipeline)
+        if args.pipeline == "modular" and args.ocr != "none":
             args.force_ocr = prompt_yn("Force full-page OCR across all pages?", default_yes=False)
 
         # Page Range
-        page_range_input = prompt_text("Page Range (e.g. '1-10', '5', or Enter for All)", "All")
+        page_range_input = prompt_text("Page Range (e.g. '1-10', '5', or Enter for All)", "all")
         args.pages = page_range_input if page_range_input.lower() != "all" else None
 
-        # Table Recognition Mode
-        table_choice = prompt_choice_custom(
-            "Table Recognition Mode:",
-            [
-                "Accurate (IBM TableFormer; best for stats & classes) [DEFAULT]",
-                "Fast (Grid matching)",
-                "None (Treat tables as text)"
-            ],
-            default_idx=1,
-            prompt_label="Choice [1]: "
-        )
-        args.table_mode = {1: "accurate", 2: "fast", 3: "none"}[table_choice]
+        # Table Recognition Mode (Modular Pipeline)
+        if args.pipeline == "modular":
+            table_choice = prompt_choice_custom(
+                "Table Recognition Mode:  (Standard Pipeline)",
+                [
+                    "Accurate (IBM TableFormer; best for complex tables)",
+                    "Fast (Grid matching)",
+                    "None (Treat tables as text)"
+                ],
+                default_idx=1,
+                prompt_label="Choice [DEFAULT=1]: "
+            )
+            args.table_mode = {1: "accurate", 2: "fast", 3: "none"}[table_choice]
 
         # Compute Accelerator Device
         device_choice = prompt_choice_custom(
             "Compute Accelerator Device:",
             [
-                "Auto (Detect Best Available) [DEFAULT]",
+                "Auto (Detect Best Available)",
                 "Apple Silicon MPS (Metal Performance Shaders)",
                 "CPU"
             ],
             default_idx=1,
-            prompt_label="Choice [1]: "
+            prompt_label="Choice [DEFAULT=1]: "
         )
         args.device = {1: "auto", 2: "mps", 3: "cpu"}[device_choice]
 
-        # Worker CPU Threads
-        args.threads = int(prompt_text("Worker CPU Threads", str(args.threads)))
+        # Worker CPU Threads with auto-detection
+        optimal_threads = get_optimal_threads()
+        thread_input = input(f"\nWorker CPU Threads [Auto Detected={optimal_threads}]: ").strip()
+        args.threads = int(thread_input) if (thread_input and thread_input.isdigit()) else optimal_threads
 
-    # Overwrite
+    # Final Confirmation: Overwrite
+    print("\n------------------------------------------------------------")
+    print("-- Final Confirmation")
+    print("------------------------------------------------------------\n")
     args.overwrite = prompt_yn("Overwrite existing files in _output/?", default_yes=False)
 
     print("\n" + "=" * 60)
@@ -421,7 +529,7 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
 
 
 # ---------------------------------------------------------------------------
-# Post-Processing: Asset Normalization & Heading-Based Naming
+# Post-Processing: Per-Document Asset Isolation & Heading-Based Naming
 # ---------------------------------------------------------------------------
 
 def postprocess_assets_and_links(
@@ -429,7 +537,6 @@ def postprocess_assets_and_links(
     raw_assets_dir: Path,
     target_assets_dir: Path,
     doc_stem: str,
-    asset_layout: str,
     naming_scheme: str,
     custom_prefix: str,
     vlm_mode: str,
@@ -437,7 +544,7 @@ def postprocess_assets_and_links(
     vlm_model: str,
     vlm_words: int
 ) -> int:
-    """Normalize assets (sequential, custom prefix, or any heading-based name) and rewrite links."""
+    """Isolate assets into _output/<DocName>/ and normalize links in markdown."""
     if not md_path.exists():
         return 0
 
@@ -457,16 +564,13 @@ def postprocess_assets_and_links(
     raw_to_new_name: Dict[str, Tuple[str, str]] = {}  # raw_name -> (clean_name, rel_link)
 
     for line in lines:
-        # Detect any markdown heading of any level (#, ##, ###, ####, etc.)
         heading_match = re.match(r'^(#{1,6})\s+(.+)$', line.strip())
         if heading_match:
             current_heading = slugify(heading_match.group(2))
 
-        # Check for image links
         img_match = re.search(r'!\[(.*?)\]\(([^)]+)\)', line)
         if img_match:
             raw_target = img_match.group(2)
-            # Match against raw images
             for raw_img in raw_images:
                 if raw_img.name in raw_target:
                     if raw_img.name not in raw_to_new_name:
@@ -479,23 +583,18 @@ def postprocess_assets_and_links(
                         else:
                             clean_name = f"img_{image_counter:03d}.png"
 
-                        if asset_layout == "per-doc":
-                            rel_link = f"_assets/{doc_stem}/{clean_name}"
-                        else:
-                            clean_name = f"{doc_stem}_{clean_name}"
-                            rel_link = f"_assets/{clean_name}"
-
+                        rel_link = f"{doc_stem}/{clean_name}"
                         raw_to_new_name[raw_img.name] = (clean_name, rel_link)
                         image_counter += 1
                     break
 
     # Process files and generate VLM captions
-    for raw_img in raw_images:
+    for idx, raw_img in enumerate(raw_images, 1):
         if raw_img.name in raw_to_new_name:
             clean_name, rel_link = raw_to_new_name[raw_img.name]
         else:
             clean_name = f"img_{image_counter:03d}.png"
-            rel_link = f"_assets/{doc_stem}/{clean_name}" if asset_layout == "per-doc" else f"_assets/{doc_stem}_{clean_name}"
+            rel_link = f"{doc_stem}/{clean_name}"
             image_counter += 1
 
         dest_img_path = target_assets_dir / clean_name
@@ -504,17 +603,23 @@ def postprocess_assets_and_links(
 
         # Generate alt-text
         if vlm_mode == "local":
+            sys.stdout.write(f"\r  ↳ [Image {idx}/{len(raw_images)}] Generating VLM alt-text for '{clean_name}'...   ")
+            sys.stdout.flush()
             alt_text = query_local_vlm(dest_img_path, vlm_url, vlm_model, vlm_words)
         else:
             alt_text = "RPG Illustration"
 
-        # Regex replacement in full content
+        # Regex replacement in markdown
         old_ref_pattern = re.escape(raw_img.name)
         content = re.sub(
             rf'!\[(.*?)\]\([^)]*{old_ref_pattern}\)',
             lambda m: f'![{alt_text if vlm_mode == "local" else (m.group(1) or alt_text)}]({rel_link})',
             content
         )
+
+    if vlm_mode == "local":
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
 
     md_path.write_text(content, encoding="utf-8")
     return len(raw_images)
@@ -530,7 +635,7 @@ def convert_single_pdf(
     converter: DocumentConverter,
     args: argparse.Namespace
 ) -> bool:
-    """Convert one PDF document into GitHub-flavored Markdown and assets."""
+    """Convert one PDF document into GitHub-flavored Markdown and isolated assets."""
     doc_stem = pdf_path.stem
     out_md = output_dir / f"{doc_stem}.md"
 
@@ -541,26 +646,25 @@ def convert_single_pdf(
     print(f"\n▶ Processing: {pdf_path.name}")
     start_time = time.time()
 
-    if args.asset_layout == "per-doc":
-        target_assets = output_dir / "_assets" / doc_stem
-    else:
-        target_assets = output_dir / "_assets"
-
+    # Target folder: _output/<DocName>/
+    target_assets = output_dir / doc_stem
     temp_raw_assets = output_dir / f"_temp_assets_{doc_stem}"
     temp_raw_assets.mkdir(parents=True, exist_ok=True)
 
     page_range = parse_page_range(getattr(args, "pages", None))
+    pipeline_label = "IBM Granite Docling VLM (258M)" if args.pipeline in ("vlm", "granite") else "Modular Pipeline"
 
     try:
-        # Convert with specified page range
-        result = converter.convert(str(pdf_path), page_range=page_range)
-        doc = result.document
+        # Live activity status with ticking elapsed timer
+        with LiveActivityStatus(f"Converting with {pipeline_label} (Neural layout & table recognition)..."):
+            result = converter.convert(str(pdf_path), page_range=page_range)
+            doc = result.document
 
-        doc.save_as_markdown(
-            filename=out_md,
-            artifacts_dir=temp_raw_assets,
-            image_mode=ImageRefMode.REFERENCED if not args.no_images else ImageRefMode.PLACEHOLDER
-        )
+            doc.save_as_markdown(
+                filename=out_md,
+                artifacts_dir=temp_raw_assets,
+                image_mode=ImageRefMode.REFERENCED if not args.no_images else ImageRefMode.PLACEHOLDER
+            )
 
         img_count = 0
         if not args.no_images:
@@ -569,7 +673,6 @@ def convert_single_pdf(
                 raw_assets_dir=temp_raw_assets,
                 target_assets_dir=target_assets,
                 doc_stem=doc_stem,
-                asset_layout=args.asset_layout,
                 naming_scheme=getattr(args, "naming_scheme", "sequential"),
                 custom_prefix=getattr(args, "custom_prefix", "img"),
                 vlm_mode=args.vlm,
@@ -586,7 +689,8 @@ def convert_single_pdf(
         elapsed = time.time() - start_time
         page_count = doc.num_pages() if hasattr(doc, "num_pages") else "N/A"
         print(f"  ✔ Finished '{pdf_path.name}' in {elapsed:.1f}s | Pages: {page_count} | Images: {img_count}")
-        print(f"  📄 Markdown: {out_md.relative_to(Path.cwd()) if out_md.is_relative_to(Path.cwd()) else out_md}")
+        print(f"  📄 Markdown : {out_md.relative_to(Path.cwd()) if out_md.is_relative_to(Path.cwd()) else out_md}")
+        print(f"  🖼️  Assets   : {target_assets.relative_to(Path.cwd()) if target_assets.is_relative_to(Path.cwd()) else target_assets}/")
         return True
 
     except Exception as e:
@@ -598,6 +702,8 @@ def convert_single_pdf(
 
 
 def main():
+    optimal_threads = get_optimal_threads()
+
     parser = argparse.ArgumentParser(
         description="Convert RPG PDFs from _input to GitHub-flavored Markdown in _output with high-res assets & VLM alt-text.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -609,10 +715,12 @@ def main():
     parser.add_argument("--pages", type=str, default=None, help="Page range to convert (e.g. '1-10', '5', or 'all')")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing .md files and asset folders")
 
+    # Pipeline Engine
+    parser.add_argument("--pipeline", choices=["modular", "granite", "vlm"], default="modular", help="Conversion pipeline engine")
+
     # Image & Asset Settings
     parser.add_argument("--scale", type=float, default=3.0, help="Image extraction resolution scale (3.0 = High-Res)")
     parser.add_argument("--no-images", action="store_true", help="Disable image and map extraction")
-    parser.add_argument("--asset-layout", choices=["per-doc", "shared"], default="per-doc", help="Asset directory organization")
     parser.add_argument("--naming-scheme", choices=["sequential", "custom", "heading"], default="sequential", help="Image naming scheme")
     parser.add_argument("--custom-prefix", type=str, default="img", help="Custom prefix if naming-scheme is custom")
 
@@ -622,7 +730,7 @@ def main():
     parser.add_argument("--vlm-model", type=str, default="Qwen2.5-VL-7B-Instruct-GGUF", help="Model name for local VLM")
     parser.add_argument("--vlm-words", type=int, default=5, help="Max words for AI image description")
 
-    # OCR Engines
+    # OCR Engines (Modular Pipeline)
     parser.add_argument("--ocr", choices=["none", "docling", "apple", "easyocr", "tesseract", "local"], default="none", help="OCR backend engine")
     parser.add_argument("--ocr-url", type=str, default="http://127.0.0.1:8888/v1", help="Local OCR API URL")
     parser.add_argument("--ocr-model", type=str, default="deepseek-ocr-2", help="Local OCR Model Name")
@@ -631,14 +739,18 @@ def main():
 
     # Tables & Structure
     parser.add_argument("--table-mode", choices=["accurate", "fast", "none"], default="accurate", help="Table structure mode")
-    parser.add_argument("--table-images", action="store_true", help="Save visual snapshot images of tables in _assets/")
+    parser.add_argument("--table-images", action="store_true", help="Save visual snapshot images of tables")
     parser.add_argument("--no-headings", action="store_true", help="Disable automatic heading hierarchy (#, ##, ###)")
 
     # Performance
     parser.add_argument("--device", choices=["auto", "mps", "cpu"], default="auto", help="Compute accelerator device")
-    parser.add_argument("--threads", type=int, default=8, help="Number of CPU worker threads")
+    parser.add_argument("--threads", type=int, default=optimal_threads, help="Number of CPU worker threads")
 
-    args = parser.parse_args()
+    # Wizard-First UX: If no arguments were passed, automatically launch the interactive wizard
+    if len(sys.argv) == 1:
+        args = parser.parse_args(["-i"])
+    else:
+        args = parser.parse_args()
 
     # Launch wizard if requested
     if args.interactive:
@@ -665,24 +777,23 @@ def main():
         sys.exit(0)
 
     range_display = args.pages if args.pages else "All Pages"
+    pipeline_label = "IBM Granite Docling VLM (258M)" if args.pipeline in ("vlm", "granite") else "Modular Pipeline"
 
     print("=" * 60)
     print("           RPG2MD - PDF to Markdown Batch Converter          ")
     print("=" * 60)
     print(f"📁 Input Directory  : {input_dir.name}/ ({len(pdf_files)} PDF{'s' if len(pdf_files) > 1 else ''} found)")
     print(f"📁 Output Directory : {output_dir.name}/")
+    print(f"⚙️  Pipeline Engine  : {pipeline_label}")
     print(f"📄 Page Range       : {range_display}")
     print(f"🖼️  Image Scale      : {'None (Discarded)' if args.no_images else f'{args.scale}x'}")
-    print(f"🖼️  Asset Layout     : {args.asset_layout}")
     print(f"🏷️  Naming Scheme    : {args.naming_scheme}")
     print(f"🤖 Vision AI        : {args.vlm.upper()} ({args.vlm_words} words max alt-text)")
-    print(f"🔍 OCR Engine       : {args.ocr.upper()} {'[Force Full Page]' if args.force_ocr else ''}")
+    if args.pipeline == "modular":
+        print(f"🔍 OCR Engine       : {args.ocr.upper()} {'[Force Full Page]' if args.force_ocr else ''}")
     print("=" * 60)
 
-    pipeline_opts = build_pipeline_options(args)
-    converter = DocumentConverter(
-        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_opts)}
-    )
+    converter = build_converter(args)
 
     success_count = 0
     total_start = time.time()

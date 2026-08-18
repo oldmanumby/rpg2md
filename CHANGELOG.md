@@ -5,6 +5,19 @@ All notable changes to the RPG2MD project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-18
+
+### Added
+- Integrated **IBM Granite Docling (258M VLM)** end-to-end neural vision pipeline (`--pipeline granite` / `VLM Passover`) utilizing DocTags and OTSL structured representations for complex and legacy scans.
+- Added **Wizard-First Execution**: Running `rpg2md.py` with no command-line arguments now automatically launches the Interactive Setup Wizard.
+- Added active **Live Heartbeat Activity Spinner** with real-time elapsed timer (`[MM:SS elapsed]`) and sub-progress indicators for image captioning.
+- Added dynamic CPU core topology auto-detection (`Worker CPU Threads [Auto Detected={count}]`).
+- Standardized asset output to isolated per-document directories (`_output/<DocName>/`).
+
+### Fixed
+- Fixed Hugging Face `transformers` `generation_config` conflict deprecation warning during SmolVLM alt-text inference.
+- Improved heading slugification for complex non-chapter headings and appendices.
+
 ## [1.0.0] - 2026-08-17
 
 ### Added
