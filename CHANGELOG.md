@@ -5,6 +5,14 @@ All notable changes to the RPG2MD project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-08-18
+
+### Added
+- Added **Preset Management System** allowing users to save wizard settings as custom-named `.json` files in `./presets/`.
+- Added **Preset Loader in Wizard**: Option `[3] Load a Saved Preset (from ./presets/)` at the top of the interactive setup wizard.
+- Added **CLI `--preset <name>` Flag** for instant 1-click batch conversion without going through the wizard.
+- Added starter presets: `presets/digital_rulebook.json` and `presets/vintage_scans.json`.
+
 ## [1.1.0] - 2026-08-18
 
 ### Added

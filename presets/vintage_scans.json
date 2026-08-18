@@ -1,0 +1,22 @@
+{
+  "name": "vintage_scans",
+  "description": "End-to-end neural vision for legacy/parchment scans",
+  "pipeline": "granite",
+  "scale": 3.0,
+  "no_images": false,
+  "naming_scheme": "heading",
+  "custom_prefix": "img",
+  "vlm": "smolvlm",
+  "vlm_url": "http://127.0.0.1:8888/v1",
+  "vlm_model": "Qwen2.5-VL-7B-Instruct-GGUF",
+  "vlm_words": 5,
+  "ocr": "none",
+  "ocr_url": "http://127.0.0.1:8888/v1",
+  "ocr_model": "deepseek-ocr-2",
+  "ocr_scale": 3.0,
+  "force_ocr": false,
+  "table_mode": "accurate",
+  "table_images": false,
+  "no_headings": false,
+  "device": "auto"
+}

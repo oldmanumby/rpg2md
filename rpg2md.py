@@ -53,6 +53,71 @@ def get_optimal_threads() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Preset Management
+# ---------------------------------------------------------------------------
+
+def get_presets_dir() -> Path:
+    """Get the local presets directory path, creating it if needed."""
+    presets_dir = Path.cwd() / "presets"
+    presets_dir.mkdir(parents=True, exist_ok=True)
+    return presets_dir
+
+
+def list_presets(presets_dir: Path) -> List[Path]:
+    """List all available .json presets in the presets directory."""
+    return sorted(list(presets_dir.glob("*.json")))
+
+
+def save_preset(name: str, args: argparse.Namespace, presets_dir: Path) -> Path:
+    """Serialize the current arguments namespace into a named JSON preset file."""
+    clean_name = slugify(name, max_length=50)
+    preset_file = presets_dir / f"{clean_name}.json"
+
+    preset_data = {
+        "name": clean_name,
+        "pipeline": getattr(args, "pipeline", "modular"),
+        "scale": getattr(args, "scale", 3.0),
+        "no_images": getattr(args, "no_images", False),
+        "naming_scheme": getattr(args, "naming_scheme", "sequential"),
+        "custom_prefix": getattr(args, "custom_prefix", "img"),
+        "vlm": getattr(args, "vlm", "smolvlm"),
+        "vlm_url": getattr(args, "vlm_url", "http://127.0.0.1:8888/v1"),
+        "vlm_model": getattr(args, "vlm_model", "Qwen2.5-VL-7B-Instruct-GGUF"),
+        "vlm_words": getattr(args, "vlm_words", 5),
+        "ocr": getattr(args, "ocr", "none"),
+        "ocr_url": getattr(args, "ocr_url", "http://127.0.0.1:8888/v1"),
+        "ocr_model": getattr(args, "ocr_model", "deepseek-ocr-2"),
+        "ocr_scale": getattr(args, "ocr_scale", 3.0),
+        "force_ocr": getattr(args, "force_ocr", False),
+        "table_mode": getattr(args, "table_mode", "accurate"),
+        "table_images": getattr(args, "table_images", False),
+        "no_headings": getattr(args, "no_headings", False),
+        "device": getattr(args, "device", "auto"),
+        "threads": getattr(args, "threads", get_optimal_threads()),
+    }
+
+    preset_file.write_text(json.dumps(preset_data, indent=2), encoding="utf-8")
+    return preset_file
+
+
+def load_preset_file(preset_path: Path, args: argparse.Namespace) -> argparse.Namespace:
+    """Load JSON preset file and populate the arguments namespace."""
+    if not preset_path.exists():
+        print(f"Error: Preset file '{preset_path.name}' not found.", file=sys.stderr)
+        return args
+
+    try:
+        data = json.loads(preset_path.read_text(encoding="utf-8"))
+        for k, v in data.items():
+            if hasattr(args, k) and k not in ("file", "pages", "overwrite", "interactive"):
+                setattr(args, k, v)
+        return args
+    except Exception as e:
+        print(f"Error reading preset '{preset_path.name}': {e}", file=sys.stderr)
+        return args
+
+
+# ---------------------------------------------------------------------------
 # Interactive Menu Utilities
 # ---------------------------------------------------------------------------
 
@@ -227,10 +292,9 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
     if args.pipeline in ("vlm", "granite"):
         # IBM Granite Docling 258M VLM Pipeline
         vlm_opts = VlmPipelineOptions()
-        
-        # Check for Apple Silicon MLX availability
+
         use_mlx = False
-        if args.device == "mps" or args.device == "auto":
+        if args.device in ("mps", "auto"):
             try:
                 import mlx.core
                 use_mlx = True
@@ -242,7 +306,6 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
         else:
             vlm_opts.vlm_options = vlm_model_specs.GRANITEDOCLING_TRANSFORMERS
 
-        # Hardware options
         vlm_opts.accelerator_options = AcceleratorOptions(
             device=args.device if args.device != "auto" else "mps",
             num_threads=args.threads
@@ -262,18 +325,15 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
     # Standard Modular Pipeline
     opts = PdfPipelineOptions()
 
-    # 1. Images & Assets
     opts.generate_picture_images = not args.no_images
     opts.images_scale = args.scale
 
-    # 2. Vision AI (Alt-Text) with clean generation parameters (avoids deprecation warnings)
     if not args.no_images and args.vlm == "smolvlm":
         opts.do_picture_description = True
         opts.picture_description_options.prompt = f"Describe this RPG art or map in {args.vlm_words} words or less."
     else:
         opts.do_picture_description = False
 
-    # 3. OCR Engine Configuration
     if args.ocr == "none":
         opts.do_ocr = False
     elif args.ocr == "docling":
@@ -304,7 +364,6 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
     elif args.ocr == "local":
         opts.do_ocr = False
 
-    # 4. Tables & Stat Blocks
     if args.table_mode == "none":
         opts.do_table_structure = False
     else:
@@ -313,11 +372,9 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
         opts.table_structure_options = TableStructureOptions(mode=table_mode)
     opts.generate_table_images = args.table_images
 
-    # 5. Headings & Hierarchy
     if not args.no_headings:
         opts.heading_hierarchy_options = HeadingHierarchyOptions(enabled=True)
 
-    # 6. Hardware Acceleration
     opts.accelerator_options = AcceleratorOptions(
         device=args.device,
         num_threads=args.threads
@@ -334,25 +391,60 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
 
 
 # ---------------------------------------------------------------------------
-# Interactive Setup Wizard (Verbatim Finalized Layout)
+# Interactive Setup Wizard (Verbatim Finalized Layout + Preset System)
 # ---------------------------------------------------------------------------
 
 def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
-    """Walk user through exact custom numbered prompts matching user layout."""
+    """Walk user through exact custom numbered prompts matching user layout with preset loading/saving."""
     print("=" * 60)
     print("             RPG2MD - Interactive Setup Wizard              ")
     print("=" * 60)
 
+    presets_dir = get_presets_dir()
+    available_presets = list_presets(presets_dir)
+
     # 1. Wizard Mode
+    mode_options = [
+        "Standard Setup (Essential settings)",
+        "Advanced Setup (More granular control)"
+    ]
+    if available_presets:
+        mode_options.append("Load a Saved Preset (from ./presets/)")
+
     mode_choice = prompt_choice_custom(
         "Select Wizard Mode:",
-        [
-            "Standard Setup (Essential settings)",
-            "Advanced Setup (More granular control)"
-        ],
+        mode_options,
         default_idx=1,
         prompt_label="Choice [DEFAULT=1]: "
     )
+
+    # Handle Preset Loading
+    if mode_choice == 3 and available_presets:
+        print("\nAvailable Presets:")
+        for idx, p_path in enumerate(available_presets, 1):
+            print(f"[{idx}] {p_path.stem}")
+        
+        p_choice = prompt_choice_custom(
+            "Select Preset to Load:",
+            [p.stem for p in available_presets],
+            default_idx=1,
+            prompt_label="Choice [DEFAULT=1]: "
+        )
+        chosen_preset = available_presets[p_choice - 1]
+        args = load_preset_file(chosen_preset, args)
+        print(f"\n✔ Loaded preset '{chosen_preset.stem}' successfully!")
+
+        # Quick confirmation of overwrite & proceed
+        print("\n------------------------------------------------------------")
+        print("-- Final Confirmation")
+        print("------------------------------------------------------------\n")
+        args.overwrite = prompt_yn("Overwrite existing files in _output/?", default_yes=False)
+
+        print("\n" + "=" * 60)
+        print("Configuration complete! Starting conversion...")
+        print("=" * 60 + "\n")
+        return args
+
     is_advanced = (mode_choice == 2)
 
     # 2. Pipeline Engine
@@ -516,7 +608,14 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
         thread_input = input(f"\nWorker CPU Threads [Auto Detected={optimal_threads}]: ").strip()
         args.threads = int(thread_input) if (thread_input and thread_input.isdigit()) else optimal_threads
 
-    # Final Confirmation: Overwrite
+    # 7. Save Settings as Preset Option
+    save_preset_choice = prompt_yn("\nSave these settings as a reusable preset?", default_yes=False)
+    if save_preset_choice:
+        preset_name = prompt_text("Enter Preset Name", "my_preset", prompt_prefix="   ↳")
+        saved_path = save_preset(preset_name, args, presets_dir)
+        print(f"  ✔ Preset saved as 'presets/{saved_path.name}'")
+
+    # 8. Final Confirmation: Overwrite
     print("\n------------------------------------------------------------")
     print("-- Final Confirmation")
     print("------------------------------------------------------------\n")
@@ -646,7 +745,6 @@ def convert_single_pdf(
     print(f"\n▶ Processing: {pdf_path.name}")
     start_time = time.time()
 
-    # Target folder: _output/<DocName>/
     target_assets = output_dir / doc_stem
     temp_raw_assets = output_dir / f"_temp_assets_{doc_stem}"
     temp_raw_assets.mkdir(parents=True, exist_ok=True)
@@ -655,7 +753,6 @@ def convert_single_pdf(
     pipeline_label = "IBM Granite Docling VLM (258M)" if args.pipeline in ("vlm", "granite") else "Modular Pipeline"
 
     try:
-        # Live activity status with ticking elapsed timer
         with LiveActivityStatus(f"Converting with {pipeline_label} (Neural layout & table recognition)..."):
             result = converter.convert(str(pdf_path), page_range=page_range)
             doc = result.document
@@ -711,6 +808,7 @@ def main():
 
     # General & Wizard
     parser.add_argument("-i", "--interactive", action="store_true", help="Launch interactive numbered setup wizard")
+    parser.add_argument("--preset", type=str, default=None, help="Load conversion settings from a named preset in presets/")
     parser.add_argument("--file", type=str, default=None, help="Convert a single specific PDF in _input/")
     parser.add_argument("--pages", type=str, default=None, help="Page range to convert (e.g. '1-10', '5', or 'all')")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing .md files and asset folders")
@@ -745,6 +843,17 @@ def main():
     # Performance
     parser.add_argument("--device", choices=["auto", "mps", "cpu"], default="auto", help="Compute accelerator device")
     parser.add_argument("--threads", type=int, default=optimal_threads, help="Number of CPU worker threads")
+
+    # Load preset if passed via CLI
+    raw_args = sys.argv[1:]
+    if "--preset" in raw_args:
+        p_idx = raw_args.index("--preset")
+        if p_idx + 1 < len(raw_args):
+            p_name = raw_args[p_idx + 1]
+            p_file = get_presets_dir() / (f"{p_name}.json" if not p_name.endswith(".json") else p_name)
+            temp_ns = parser.parse_args()
+            temp_ns = load_preset_file(p_file, temp_ns)
+            parser.set_defaults(**vars(temp_ns))
 
     # Wizard-First UX: If no arguments were passed, automatically launch the interactive wizard
     if len(sys.argv) == 1:

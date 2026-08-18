@@ -9,6 +9,7 @@
 
 Powered by **Docling v2** and **IBM Granite Docling (258M VLM)**, it solves the most common PDF conversion hurdles in tabletop gaming books:
 - **Dual Pipeline Architecture**: Choose between the blazing-fast **Modular Pipeline** (for modern digital rulebooks) or the end-to-end **VLM Passover** via IBM Granite Docling 258M (for tricky scans, warped pages, and complex visual sidebars).
+- **Preset Management System**: Save your customized wizard settings as named `.json` presets in `./presets/` and recall them instantly via wizard or CLI flag.
 - **Multi-Column Layout Preservation**: Accurately tracks reading flow across 2-column and 3-column layouts without jumping across gutters.
 - **Isolated Asset Extraction**: Crops battle maps, character portraits, item sketches, and diagrams into clean, high-resolution standalone images ($1.0\times$ to $4.0\times$ retina scale) inside dedicated folders: `_output/<DocName>/`.
 - **Dynamic Image Naming**: Automatically names extracted images sequentially (`img_001.png`), with custom prefixes (`dnd5e_001.png`), or based on the **preceding section heading** (`combat_rules_001.png`, `ancient_red_dragon_001.png`).
@@ -26,6 +27,9 @@ rpg2md/
 ├── _output/             # Generated .md files and asset directories
 │   ├── <DocName>.md     # Converted Markdown document
 │   └── <DocName>/       # Isolated per-document asset folder (img_001.png, ...)
+├── presets/             # Saved conversion presets (*.json)
+│   ├── digital_rulebook.json
+│   └── vintage_scans.json
 ├── .venv/               # Virtual environment
 ├── requirements.txt     # Project dependencies
 ├── rpg2md.py            # Main conversion script
@@ -77,7 +81,7 @@ pip install -r requirements.txt
 *(On Windows: `.\.venv\Scripts\python rpg2md.py`)*
 
 > [!TIP]
-> Running the script with no arguments automatically launches the **Interactive Setup Wizard** to guide you through your settings. To run directly with flags without the wizard, supply command-line arguments (e.g. `./.venv/bin/python rpg2md.py --pipeline modular`).
+> Running the script with no arguments automatically launches the **Interactive Setup Wizard**. To run directly with a saved preset or CLI flags, pass arguments (e.g. `./.venv/bin/python rpg2md.py --preset digital_rulebook`).
 
 ---
 
@@ -91,6 +95,7 @@ pip install -r requirements.txt
 Select Wizard Mode:
 [1] Standard Setup (Essential settings)
 [2] Advanced Setup (More granular control)
+[3] Load a Saved Preset (from ./presets/)
 Choice [DEFAULT=1]: 
 
 Select Pipeline Engine:
@@ -161,6 +166,9 @@ Choice [DEFAULT=1]:
 
 Worker CPU Threads [Auto Detected=??]: 
 
+Save these settings as a reusable preset? (y/N): 
+   ↳ (If 'y'): Enter Preset Name [DEFAULT=my_preset]: 
+
 ------------------------------------------------------------
 -- Final Confirmation
 ------------------------------------------------------------
@@ -174,6 +182,30 @@ Configuration complete! Starting conversion...
 
 ---
 
+## 💾 Preset Management System
+
+Save time on repeated conversions by creating named presets:
+
+### 1. Saving a Preset
+When you finish configuring your settings in the interactive wizard, answer `y` to:
+```text
+Save these settings as a reusable preset? (y/N): y
+   ↳ Enter Preset Name [DEFAULT=my_preset]: dnd5e_custom
+```
+Your settings will be saved to `./presets/dnd5e_custom.json`.
+
+### 2. Loading a Preset via Wizard
+Choose **`[3] Load a Saved Preset`** at the top of the wizard to pick from your list of saved presets.
+
+### 3. Loading a Preset via CLI (1-Click Run)
+Run directly from terminal without prompts:
+```bash
+./.venv/bin/python rpg2md.py --preset digital_rulebook
+./.venv/bin/python rpg2md.py --preset vintage_scans
+```
+
+---
+
 ## 🛠️ Command Line Interface (CLI) Reference
 
 ```bash
@@ -183,6 +215,7 @@ Configuration complete! Starting conversion...
 | Flag | Type / Choices | Default | Description |
 | :--- | :--- | :---: | :--- |
 | `-i`, `--interactive` | *flag* | `False` | Explicitly launch the interactive wizard. |
+| `--preset <name>` | *string* | `None` | Load settings from a named preset in `./presets/`. |
 | `--file <filename>` | *string* | `None` | Process only a specific PDF in `_input/`. |
 | `--pages <range>` | *string* | `None` | Page range to convert (e.g. `--pages 1-10` or `--pages 5`). |
 | `--pipeline` | `modular` \| `granite` \| `vlm` | `modular` | `modular` uses fast vector parsing + TableFormer; `granite` uses IBM Granite Docling 258M VLM. |
@@ -212,12 +245,12 @@ Configuration complete! Starting conversion...
 
 ### 1. Modern Digital Books (Fastest Execution)
 ```bash
-./.venv/bin/python rpg2md.py --pipeline modular
+./.venv/bin/python rpg2md.py --preset digital_rulebook
 ```
 
 ### 2. End-to-End Neural Vision on Weathered Scans (Granite Docling VLM)
 ```bash
-./.venv/bin/python rpg2md.py --pipeline granite --scale 3.0
+./.venv/bin/python rpg2md.py --preset vintage_scans
 ```
 
 ### 3. Heading-Based Image Naming
