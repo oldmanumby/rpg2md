@@ -1,3 +1,4 @@
+import argparse
 import html
 import json
 import shutil
@@ -18,8 +19,11 @@ class TestRPG2MDHelpers(unittest.TestCase):
         self.assertEqual(rpg2md.slugify("Chapter 1: The Dragon's Lair!"), "chapter_1_the_dragons_lair")
         # HTML entities
         self.assertEqual(rpg2md.slugify("D&amp;D 5th Edition"), "dd_5th_edition")
-        # Spaced out capital letters (e.g. B A L D U R ' S  G A T E)
+        # Spaced out capital letters on fantasy covers
         self.assertEqual(rpg2md.slugify("B A L D U R ' S  G A T E"), "baldurs_gate")
+        self.assertEqual(rpg2md.slugify("D E S C E N T   I N T O   A V E R N U S"), "descent_into_avernus")
+        # Preserving existing valid snake_case names
+        self.assertEqual(rpg2md.slugify("test_preset"), "test_preset")
         # Empty or symbol-only strings fallback
         self.assertEqual(rpg2md.slugify("!@#$%"), "section")
         # Truncation
@@ -85,11 +89,47 @@ class TestRPG2MDHelpers(unittest.TestCase):
             self.assertEqual(data["description"], "Test preset description")
             self.assertEqual(data["ocr"], "apple")
 
-            # Test loading
-            target_args = DummyArgs()
-            target_args.ocr = "none"
-            loaded_args = rpg2md.load_preset_file(saved_file, target_args)
-            self.assertEqual(loaded_args.ocr, "apple")
+            # Test loading into a blank Namespace
+            target_ns = argparse.Namespace()
+            loaded_args = rpg2md.load_preset_file(saved_file, target_ns)
+            self.assertEqual(getattr(loaded_args, "ocr", None), "apple")
+            self.assertEqual(getattr(loaded_args, "naming_scheme", None), "heading")
+            self.assertEqual(getattr(loaded_args, "scale", None), 3.0)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_cli_preset_preloading(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        try:
+            preset_file = temp_dir / "custom_test.json"
+            preset_file.write_text(json.dumps({
+                "name": "custom_test",
+                "naming_scheme": "heading",
+                "scale": 2.5,
+                "pipeline": "granite",
+                "vlm": "none"
+            }), encoding="utf-8")
+
+            # Simulate main() CLI preloading into an empty Namespace
+            temp_ns = argparse.Namespace()
+            temp_ns = rpg2md.load_preset_file(preset_file, temp_ns)
+
+            self.assertEqual(getattr(temp_ns, "naming_scheme", None), "heading")
+            self.assertEqual(getattr(temp_ns, "scale", None), 2.5)
+            self.assertEqual(getattr(temp_ns, "pipeline", None), "granite")
+            self.assertEqual(getattr(temp_ns, "vlm", None), "none")
+
+            # Verify parser.set_defaults behaves as expected
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--naming-scheme", default="sequential")
+            parser.add_argument("--scale", type=float, default=3.0)
+            parser.add_argument("--pipeline", default="modular")
+            parser.set_defaults(**vars(temp_ns))
+
+            parsed = parser.parse_args([])
+            self.assertEqual(parsed.naming_scheme, "heading")
+            self.assertEqual(parsed.scale, 2.5)
+            self.assertEqual(parsed.pipeline, "granite")
         finally:
             shutil.rmtree(temp_dir)
 

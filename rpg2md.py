@@ -31,7 +31,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-__version__ = "1.3.3"
+__version__ = "1.3.4"
 
 # Base directory anchoring (resolves reliably regardless of current working directory)
 BASE_DIR = Path(__file__).resolve().parent
@@ -151,8 +151,8 @@ def ensure_models_ready(args: argparse.Namespace):
     if getattr(args, "pipeline", "modular") in ("vlm", "granite"):
         prefetch_hf_model("ibm-granite/granite-docling-258M", "IBM Granite Docling (258M VLM)", 512)
 
-    # 2. SmolVLM-256M Alt-Text
-    if not getattr(args, "no_images", False) and getattr(args, "vlm", "smolvlm") == "smolvlm":
+    # 2. SmolVLM-256M Alt-Text (Modular pipeline only)
+    if getattr(args, "pipeline", "modular") == "modular" and not getattr(args, "no_images", False) and getattr(args, "vlm", "smolvlm") == "smolvlm":
         prefetch_hf_model("HuggingFaceTB/SmolVLM-256M-Instruct", "SmolVLM-256M", 550)
 
     # 3. EasyOCR
@@ -235,7 +235,7 @@ def load_preset_file(preset_path: Path, args: Any) -> Any:
     try:
         data = json.loads(preset_path.read_text(encoding="utf-8"))
         for k, v in data.items():
-            if hasattr(args, k) and k not in ("file", "pages", "overwrite", "interactive", "download_models"):
+            if k not in ("file", "pages", "overwrite", "interactive", "download_models"):
                 setattr(args, k, v)
         return args
     except Exception as e:
@@ -333,7 +333,6 @@ def slugify(text: str, max_length: int = 35) -> str:
     """Convert heading text into a clean snake_case filename slug, handling HTML entities and spaced letters."""
     text = html.unescape(text)
     text = collapse_spaced_words(text)
-    # Strip markdown and special punctuation while preserving word chars, hyphens, and existing underscores
     text = re.sub(r'[^\w\s-]', '', text)
     text = re.sub(r'[-\s]+', '_', text).strip('_').lower()
     text = re.sub(r'[^a-z0-9_]', '', text)
@@ -670,26 +669,45 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
 
     # 4. Vision AI for Image Descriptions (Alt-Text)
     if not args.no_images:
-        vlm_choice = prompt_choice_custom(
-            "Vision AI for Image Descriptions (Alt-Text):",
-            [
-                "SmolVLM-256M (Fastest built-in model)",
-                "Local LLM via Endpoint (e.g. Qwen2.5-VL)",
-                "None: Standard `![Image](link)`"
-            ],
-            default_idx=1,
-            prompt_label="Choice [DEFAULT=1]: "
-        )
-        if vlm_choice == 1:
-            args.vlm = "smolvlm"
-            args.vlm_words = 5
-        elif vlm_choice == 2:
-            args.vlm = "local"
-            args.vlm_url = prompt_text("Local VLM Endpoint URL (e.g. http://127.0.0.1:8888/v1)", args.vlm_url, prompt_prefix="       ↳")
-            args.vlm_model = prompt_text("Local Model ID (e.g. Qwen2.5-VL-7B-Instruct-GGUF)", args.vlm_model, prompt_prefix="       ↳")
-            args.vlm_words = prompt_int("Max Words per Alt-Text", 5, prompt_prefix="       ↳")
-        elif vlm_choice == 3:
-            args.vlm = "none"
+        if args.pipeline == "modular":
+            vlm_choice = prompt_choice_custom(
+                "Vision AI for Image Descriptions (Alt-Text):",
+                [
+                    "SmolVLM-256M (Fastest built-in model)",
+                    "Local LLM via Endpoint (e.g. Qwen2.5-VL)",
+                    "None: Standard `![Image](link)`"
+                ],
+                default_idx=1,
+                prompt_label="Choice [DEFAULT=1]: "
+            )
+            if vlm_choice == 1:
+                args.vlm = "smolvlm"
+                args.vlm_words = 5
+            elif vlm_choice == 2:
+                args.vlm = "local"
+                args.vlm_url = prompt_text("Local VLM Endpoint URL (e.g. http://127.0.0.1:8888/v1)", args.vlm_url, prompt_prefix="       ↳")
+                args.vlm_model = prompt_text("Local Model ID (e.g. Qwen2.5-VL-7B-Instruct-GGUF)", args.vlm_model, prompt_prefix="       ↳")
+                args.vlm_words = prompt_int("Max Words per Alt-Text", 5, prompt_prefix="       ↳")
+            elif vlm_choice == 3:
+                args.vlm = "none"
+        else:
+            # Granite VLM handles layout and extraction natively
+            vlm_choice = prompt_choice_custom(
+                "Vision AI for Image Descriptions (Alt-Text):  (VLM Passover)",
+                [
+                    "None: Standard `![Image](link)`",
+                    "Local LLM via Endpoint (e.g. Qwen2.5-VL)"
+                ],
+                default_idx=1,
+                prompt_label="Choice [DEFAULT=1]: "
+            )
+            if vlm_choice == 1:
+                args.vlm = "none"
+            elif vlm_choice == 2:
+                args.vlm = "local"
+                args.vlm_url = prompt_text("Local VLM Endpoint URL (e.g. http://127.0.0.1:8888/v1)", args.vlm_url, prompt_prefix="       ↳")
+                args.vlm_model = prompt_text("Local Model ID (e.g. Qwen2.5-VL-7B-Instruct-GGUF)", args.vlm_model, prompt_prefix="       ↳")
+                args.vlm_words = prompt_int("Max Words per Alt-Text", 5, prompt_prefix="       ↳")
     else:
         args.vlm = "none"
 
@@ -931,6 +949,12 @@ def convert_single_pdf(
     target_assets = doc_project_dir / "_assets"
     target_assets.mkdir(parents=True, exist_ok=True)
 
+    # Clean out stale assets when overwriting
+    if args.overwrite and target_assets.exists():
+        for old_file in target_assets.glob("*"):
+            if old_file.is_file():
+                old_file.unlink()
+
     temp_raw_assets = output_dir / f"_temp_assets_{doc_stem}"
     temp_raw_assets.mkdir(parents=True, exist_ok=True)
 
@@ -1039,7 +1063,7 @@ def main():
         download_all_builtin_models()
         sys.exit(0)
 
-    # Preset loading handler before parsing
+    # Preset pre-loading handler
     raw_args = sys.argv[1:]
     if "--preset" in raw_args:
         try:

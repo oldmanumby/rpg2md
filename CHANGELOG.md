@@ -5,6 +5,14 @@ All notable changes to the RPG2MD project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-08-19
+
+### Fixed
+- Fixed CLI `--preset` argument loading by removing the `hasattr` restriction in `load_preset_file()`, ensuring preset values correctly populate the argument parser defaults.
+- Fixed SmolVLM pre-downloading in `ensure_models_ready()` by restricting it to the Modular pipeline (where Docling supports it), avoiding unnecessary downloads during Granite VLM runs.
+- Fixed stale asset retention on `--overwrite` by purging existing image assets in `_output/<DocName>/_assets/` before extracting new images.
+- Added automated unit tests for CLI preset preloading and namespace population.
+
 ## [1.3.3] - 2026-08-19
 
 ### Added
