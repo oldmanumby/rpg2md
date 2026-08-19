@@ -5,6 +5,25 @@ All notable changes to the RPG2MD project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-08-19
+
+### Added
+- Added automated unit test suite in `tests/test_rpg2md.py` covering slugification, page range validation, preset persistence, and asset post-processing.
+- Added explicit input validation helpers (`prompt_int`, `prompt_float`) with retry loops in the interactive wizard.
+- Added HTML entity unescaping (`html.unescape`) and spaced-out title collapse (`B A L D U R ' S  G A T E` -> `baldurs_gate`) in heading slugification.
+- Added Tesseract OCR support to the interactive wizard OCR selection menu.
+- Added support for `.jpeg` and `.webp` asset extraction alongside `.png` and `.jpg` with $O(1)$ dictionary lookup.
+- Added `--version` / `-v` CLI flag.
+
+### Fixed
+- Fixed dead `--ocr local` option by removing it from the OCR engine selection (local LLM endpoints are properly utilized via `--vlm local` for Vision Alt-Text).
+- Fixed cross-platform device handling in Granite VLM pipeline by removing hardcoded `mps` fallback, allowing native auto-detection across Linux (`cuda`/`cpu`), Windows (`cuda`/`cpu`), and macOS (`mps`).
+- Fixed silent exception swallowing in `query_local_vlm()` by adding diagnostic warnings to `stderr` when local endpoints are unreachable.
+- Fixed project directory anchoring by resolving `BASE_DIR = Path(__file__).resolve().parent` so the script can be executed from any working directory.
+- Fixed silent full-book conversion on malformed `--pages` arguments by enforcing strict syntax parsing and error exit.
+- Fixed Hugging Face cache checking in `is_hf_model_cached()` to verify snapshot integrity rather than checking folder existence alone.
+- Fixed TTY awareness in `LiveActivityStatus` so background/piped logs do not spam carriage returns.
+
 ## [1.3.2] - 2026-08-19
 
 ### Added

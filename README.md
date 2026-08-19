@@ -15,7 +15,7 @@ Powered by **Docling v2** and **IBM Granite Docling (258M VLM)**, it solves the 
 - **Multi-Column Layout Preservation**: Accurately tracks reading flow across 2-column and 3-column layouts without jumping across gutters.
 - **Dynamic Image Naming**: Automatically names extracted images sequentially (`img_001.png`), with custom prefixes (`dnd5e_001.png`), or based on the **preceding section heading** (`combat_rules_001.png`, `ancient_red_dragon_001.png`).
 - **AI-Powered Image Descriptions (Alt-Text)**: Automatically generates concise 5-word Markdown image alt-text using built-in local models (**SmolVLM-256M**) or local Vision LLM endpoints (**Qwen2.5-VL**, **DeepSeek-OCR-2**).
-- **Multi-Engine OCR**: Seamlessly switch between Native Digital Text (0% error rate), **Apple Vision** (M2/M3 Neural Engine), **Docling RapidOCR**, **EasyOCR** (for vintage/weathered scans), and Local Neural Endpoints.
+- **Multi-Engine OCR**: Seamlessly switch between Native Digital Text (0% error rate), **Apple Vision** (M2/M3 Neural Engine), **Docling RapidOCR**, **EasyOCR** (for vintage/weathered scans), and **Tesseract OCR**.
 - **Complex Table & Stat Block Parsing**: Uses IBM TableFormer and DocTags OTSL vocabulary for multi-line wrapped cells, spell progression charts, and monster stat blocks.
 
 ---
@@ -32,6 +32,8 @@ rpg2md/
 ├── presets/                  # Saved conversion presets (*.json)
 │   ├── digital_rulebook.json
 │   └── vintage_scans.json
+├── tests/                    # Automated unit tests
+│   └── test_rpg2md.py
 ├── .venv/                    # Virtual environment
 ├── requirements.txt          # Project dependencies
 ├── rpg2md.py                 # Main conversion script
@@ -70,7 +72,13 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 4. (Optional) Pre-download Built-in AI Models for Offline Use
+### 4. (Optional) Apple Silicon MLX Acceleration
+For ultra-fast neural inference on Apple Silicon Macs:
+```bash
+pip install mlx-vlm
+```
+
+### 5. (Optional) Pre-download Built-in AI Models for Offline Use
 ```bash
 ./.venv/bin/python rpg2md.py --download-models
 ```
@@ -135,11 +143,8 @@ OCR Engine:  (Shown for Standard Pipeline)
 [2] Docling Default (Built-in RapidOCR; good for majority of PDFs)
 [3] Apple Vision Framework (Neural Engine; better OCR accuracy)
 [4] EasyOCR (Built-in PyTorch; best for legacy PDFs/scans)
-[5] Local LLM via Endpoint (e.g. DeepSeek-OCR)
+[5] Tesseract OCR (Open source OCR engine)
 Choice [DEFAULT=1]: 
-   ↳ (If [5] Local LLM is chosen):
-       Local OCR Endpoint URL (e.g. http://127.0.0.1:8888/v1): 
-       Local OCR Model ID (e.g. deepseek-ocr-2): 
 
 ------------------------------------------------------------
 -- Advanced Settings (Only shown if [2] Advanced was chosen)
@@ -176,6 +181,7 @@ Worker CPU Threads [Auto Detected=??]:
 
 Save these settings as a reusable preset? (y/N): 
    ↳ (If 'y'): Enter Preset Name [DEFAULT=my_preset]: 
+   ↳ Enter Optional Description: 
 
 ------------------------------------------------------------
 -- Final Confirmation
@@ -199,6 +205,7 @@ When you finish configuring your settings in the interactive wizard, answer `y` 
 ```text
 Save these settings as a reusable preset? (y/N): y
    ↳ Enter Preset Name [DEFAULT=my_preset]: dnd5e_custom
+   ↳ Enter Optional Description: High-res conversion for 5E adventure modules
 ```
 Your settings will be saved to `./presets/dnd5e_custom.json`.
 
@@ -223,6 +230,7 @@ Run directly from terminal without prompts:
 | Flag | Type / Choices | Default | Description |
 | :--- | :--- | :---: | :--- |
 | `-i`, `--interactive` | *flag* | `False` | Explicitly launch the interactive wizard. |
+| `-v`, `--version` | *flag* | `1.3.3` | Show program version number and exit. |
 | `--preset <name>` | *string* | `None` | Load settings from a named preset in `./presets/`. |
 | `--download-models` | *flag* | `False` | Download all built-in AI models to local cache and exit. |
 | `--file <filename>` | *string* | `None` | Process only a specific PDF in `_input/`. |
@@ -237,16 +245,22 @@ Run directly from terminal without prompts:
 | `--vlm-url` | *string* | `http://127.0.0.1:8888/v1` | OpenAI-compatible API URL for local vision inference. |
 | `--vlm-model` | *string* | `Qwen2.5-VL-7B-Instruct-GGUF` | Model name for local vision inference. |
 | `--vlm-words` | *integer* | `5` | Maximum word count for generated image alt-text. |
-| `--ocr` | `none` \| `docling` \| `apple` \| `easyocr` \| `tesseract` \| `local` | `none` | OCR backend engine (for Modular pipeline). |
-| `--ocr-url` | *string* | `http://127.0.0.1:8888/v1` | OpenAI-compatible API URL for local OCR models. |
-| `--ocr-model` | *string* | `deepseek-ocr-2` | Model name for local OCR inference. |
+| `--ocr` | `none` \| `docling` \| `apple` \| `easyocr` \| `tesseract` | `none` | OCR backend engine (for Modular pipeline). |
 | `--ocr-scale` | *float* | `3.0` | Raster upscaling factor before OCR processing. |
 | `--force-ocr` | *flag* | `False` | Force full-page raster OCR across every page. |
 | `--table-mode` | `accurate` \| `fast` \| `none` | `accurate` | `accurate` uses IBM TableFormer for multi-column wrapped stat blocks. |
 | `--table-images` | *flag* | `False` | Save cropped visual snapshot PNGs of tables. |
 | `--no-headings` | *flag* | `False` | Disable automatic heading hierarchy detection (`#`, `##`, `###`). |
-| `--device` | `auto` \| `mps` \| `cpu` | `auto` | Compute device (`mps` for Apple Silicon GPU, `cpu` for generic CPU). |
+| `--device` | `auto` \| `mps` \| `cpu` \| `cuda` | `auto` | Compute device (`mps` for Apple Silicon GPU, `cuda` for NVIDIA GPU, `cpu` for generic CPU). |
 | `--threads` | *integer* | *Auto* | CPU worker threads (auto-detects hardware topology). |
+
+---
+
+## 🧪 Running Automated Unit Tests
+
+```bash
+./.venv/bin/python -m unittest discover -s tests -p "test_*.py" -v
+```
 
 ---
 
@@ -293,6 +307,7 @@ Names all artwork after the section it appears under (e.g. `combat_rules_001.png
 | **SmolVLM-256M** | Compact Vision Model | `~/.cache/huggingface/hub/models--HuggingFaceTB--SmolVLM-256M-Instruct/` | Verified & downloaded on first run for image alt-text. |
 | **Docling Layout Heron** | CNN Layout Detector | `~/.cache/huggingface/hub/models--docling-project--docling-layout-heron/` | Auto-cached by Docling for multi-column parsing. |
 | **EasyOCR** | PyTorch (CRAFT + ResNet) | `~/.EasyOCR/model/` | PyTorch neural network weights for legacy scans. |
+| **Tesseract OCR** | Open Source OCR Engine | System binaries (`tesseract`) | Standard OCR engine for non-scanned layout text. |
 | **Apple Vision (`ocrmac`)** | macOS Native Framework | **0 MB** (Built into macOS) | Native Apple Silicon Neural Engine execution. |
 | **DeepSeek-OCR-2 / Qwen2.5-VL** | Frontier VLM (GGUF) | User-managed endpoint | Served locally via **LM Studio / Unsloth / `llama-server`** at `http://127.0.0.1:8888/v1`. |
 

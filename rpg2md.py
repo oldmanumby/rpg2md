@@ -10,16 +10,15 @@ extracting high-res images into `_output/<DocName>/_assets/` with AI alt-text.
 import os
 import sys
 
-# Silence noisy PyTorch Dynamo, C++ graph tracing, and Hugging Face warnings before imports
+# Silence noisy PyTorch Dynamo and low-level C++ tracing warnings before importing libraries
 os.environ["TORCHDYNAMO_DISABLE"] = "1"
 os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-os.environ["PYTHONWARNINGS"] = "ignore"
 
 import argparse
 import base64
-import contextlib
+import html
 import itertools
 import json
 import logging
@@ -30,10 +29,17 @@ import urllib.error
 import urllib.request
 import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-# Suppress Python warnings & library logs
-warnings.filterwarnings("ignore")
+__version__ = "1.3.3"
+
+# Base directory anchoring (resolves reliably regardless of current working directory)
+BASE_DIR = Path(__file__).resolve().parent
+
+# Target logging & warning suppression on third-party libraries
+warnings.filterwarnings("ignore", module="transformers")
+warnings.filterwarnings("ignore", module="torch")
+warnings.filterwarnings("ignore", module="docling")
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("torch").setLevel(logging.ERROR)
 logging.getLogger("docling").setLevel(logging.ERROR)
@@ -87,11 +93,12 @@ def get_pdf_page_count(pdf_path: Path) -> int:
 # ---------------------------------------------------------------------------
 
 def is_hf_model_cached(repo_id: str) -> bool:
-    """Check if Hugging Face repo is already cached in ~/.cache/huggingface/hub/."""
+    """Check if Hugging Face repo has a valid downloaded snapshot in ~/.cache/huggingface/hub/."""
     hub_dir = Path.home() / ".cache" / "huggingface" / "hub"
     folder_name = f"models--{repo_id.replace('/', '--')}"
     target_dir = hub_dir / folder_name
-    if target_dir.exists() and any(target_dir.iterdir()):
+    snapshots_dir = target_dir / "snapshots"
+    if snapshots_dir.exists() and any(snapshots_dir.iterdir()):
         return True
     return False
 
@@ -172,8 +179,8 @@ def download_all_builtin_models():
 # ---------------------------------------------------------------------------
 
 def get_presets_dir() -> Path:
-    """Get the local presets directory path, creating it if needed."""
-    presets_dir = Path.cwd() / "presets"
+    """Get the presets directory path, creating it if needed."""
+    presets_dir = BASE_DIR / "presets"
     presets_dir.mkdir(parents=True, exist_ok=True)
     return presets_dir
 
@@ -183,13 +190,19 @@ def list_presets(presets_dir: Path) -> List[Path]:
     return sorted(list(presets_dir.glob("*.json")))
 
 
-def save_preset(name: str, args: argparse.Namespace, presets_dir: Path) -> Path:
-    """Serialize the current arguments namespace into a named JSON preset file."""
+def save_preset(
+    name: str,
+    args: Any,
+    presets_dir: Path,
+    description: str = ""
+) -> Path:
+    """Serialize conversion settings into a named JSON preset file."""
     clean_name = slugify(name, max_length=50)
     preset_file = presets_dir / f"{clean_name}.json"
 
     preset_data = {
         "name": clean_name,
+        "description": description or f"Custom preset '{clean_name}'",
         "pipeline": getattr(args, "pipeline", "modular"),
         "scale": getattr(args, "scale", 3.0),
         "no_images": getattr(args, "no_images", False),
@@ -200,8 +213,6 @@ def save_preset(name: str, args: argparse.Namespace, presets_dir: Path) -> Path:
         "vlm_model": getattr(args, "vlm_model", "Qwen2.5-VL-7B-Instruct-GGUF"),
         "vlm_words": getattr(args, "vlm_words", 5),
         "ocr": getattr(args, "ocr", "none"),
-        "ocr_url": getattr(args, "ocr_url", "http://127.0.0.1:8888/v1"),
-        "ocr_model": getattr(args, "ocr_model", "deepseek-ocr-2"),
         "ocr_scale": getattr(args, "ocr_scale", 3.0),
         "force_ocr": getattr(args, "force_ocr", False),
         "table_mode": getattr(args, "table_mode", "accurate"),
@@ -215,7 +226,7 @@ def save_preset(name: str, args: argparse.Namespace, presets_dir: Path) -> Path:
     return preset_file
 
 
-def load_preset_file(preset_path: Path, args: argparse.Namespace) -> argparse.Namespace:
+def load_preset_file(preset_path: Path, args: Any) -> Any:
     """Load JSON preset file and populate the arguments namespace."""
     if not preset_path.exists():
         print(f"Error: Preset file '{preset_path.name}' not found.", file=sys.stderr)
@@ -233,7 +244,7 @@ def load_preset_file(preset_path: Path, args: argparse.Namespace) -> argparse.Na
 
 
 # ---------------------------------------------------------------------------
-# Interactive Menu Utilities
+# Interactive Menu Utilities & Input Validation
 # ---------------------------------------------------------------------------
 
 def prompt_choice_custom(
@@ -242,7 +253,7 @@ def prompt_choice_custom(
     default_idx: int = 1,
     prompt_label: str = "Choice [DEFAULT=1]: "
 ) -> int:
-    """Prompt user with formatted options and custom prompt label."""
+    """Prompt user with formatted options and robust numeric choice validation."""
     print(f"\n{title}")
     for idx, opt in enumerate(options, 1):
         print(f"[{idx}] {opt}")
@@ -264,6 +275,38 @@ def prompt_text(title: str, default: str = "", prompt_prefix: str = "") -> str:
     return val if val else default
 
 
+def prompt_int(title: str, default: int, prompt_prefix: str = "", min_val: int = 1) -> int:
+    """Prompt user for integer input with retry validation."""
+    prefix = f"{prompt_prefix} " if prompt_prefix else ""
+    while True:
+        val = input(f"{prefix}{title} [DEFAULT={default}]: ").strip()
+        if not val:
+            return default
+        try:
+            int_val = int(val)
+            if int_val >= min_val:
+                return int_val
+            print(f"Please enter an integer greater than or equal to {min_val}.")
+        except ValueError:
+            print("Invalid input. Please enter a valid whole number.")
+
+
+def prompt_float(title: str, default: float, prompt_prefix: str = "", min_val: float = 0.1) -> float:
+    """Prompt user for float input with retry validation."""
+    prefix = f"{prompt_prefix} " if prompt_prefix else ""
+    while True:
+        val = input(f"{prefix}{title} [DEFAULT={default}]: ").strip()
+        if not val:
+            return default
+        try:
+            float_val = float(val)
+            if float_val >= min_val:
+                return float_val
+            print(f"Please enter a number greater than or equal to {min_val}.")
+        except ValueError:
+            print("Invalid input. Please enter a valid decimal number.")
+
+
 def prompt_yn(title: str, default_yes: bool = True) -> bool:
     """Prompt user for (Y/n) or (y/N) boolean."""
     prompt_suffix = " (Y/n): " if default_yes else " (y/N): "
@@ -273,10 +316,25 @@ def prompt_yn(title: str, default_yes: bool = True) -> bool:
     return choice in ("y", "yes", "true", "1")
 
 
+def collapse_spaced_words(text: str) -> str:
+    """Collapse spaced single characters on fantasy covers (e.g. 'B A L D U R \\' S   G A T E' -> 'BALDUR\\'S GATE')."""
+    text = re.sub(r"\s*'\s*", "'", text)
+    text = re.sub(r'\s{2,}', ' __WB__ ', text)
+    pattern = re.compile(r'\b([A-Za-z0-9])\s+(?=[A-Za-z0-9]\b)')
+    prev = ""
+    while prev != text:
+        prev = text
+        text = pattern.sub(r'\1', text)
+    text = text.replace('__WB__', ' ')
+    return text
+
+
 def slugify(text: str, max_length: int = 35) -> str:
-    """Convert any heading text into a clean snake_case filename slug."""
-    text = re.sub(r'&[a-zA-Z0-9#]+;', '', text)
-    text = re.sub(r'[#*_`\[\]()\'"<>:?,.!/\\|~+={}$^]', '', text)
+    """Convert heading text into a clean snake_case filename slug, handling HTML entities and spaced letters."""
+    text = html.unescape(text)
+    text = collapse_spaced_words(text)
+    # Strip markdown and special punctuation while preserving word chars, hyphens, and existing underscores
+    text = re.sub(r'[^\w\s-]', '', text)
     text = re.sub(r'[-\s]+', '_', text).strip('_').lower()
     text = re.sub(r'[^a-z0-9_]', '', text)
     if not text:
@@ -285,28 +343,36 @@ def slugify(text: str, max_length: int = 35) -> str:
 
 
 def parse_page_range(range_str: Optional[str]) -> Tuple[int, int]:
-    """Parse strings like '1-10', '5', or 'all' into a (start, end) tuple for Docling."""
+    """Parse strings like '1-10', '5', or 'all' into a (start, end) tuple. Raises ValueError on malformed syntax."""
     if not range_str or range_str.strip().lower() in ("all", "*", ""):
         return (1, 9223372036854775807)
 
     clean = range_str.strip()
     if "-" in clean:
         parts = clean.split("-")
-        try:
-            start = int(parts[0].strip())
-            end = int(parts[1].strip())
-            return (max(1, start), max(start, end))
-        except ValueError:
-            return (1, 9223372036854775807)
-    elif clean.isdigit():
-        page = int(clean)
-        return (max(1, page), max(1, page))
+        if len(parts) != 2:
+            raise ValueError(f"Invalid page range format '{range_str}'. Expected format like '1-10'.")
+        part0 = parts[0].strip()
+        part1 = parts[1].strip()
+        if not (part0.isdigit() and part1.isdigit()):
+            raise ValueError(f"Invalid non-numeric page range '{range_str}'.")
+        start = int(part0)
+        end = int(part1)
+        if start < 1:
+            start = 1
+        return (start, max(start, end))
 
-    return (1, 9223372036854775807)
+    if clean.isdigit():
+        page = int(clean)
+        if page < 1:
+            page = 1
+        return (page, page)
+
+    raise ValueError(f"Invalid page specification '{range_str}'. Expected a number, range (e.g. '1-10'), or 'all'.")
 
 
 # ---------------------------------------------------------------------------
-# Live Terminal Heartbeat Spinner
+# Live Terminal Heartbeat Spinner (TTY-Aware)
 # ---------------------------------------------------------------------------
 
 class LiveActivityStatus:
@@ -317,6 +383,7 @@ class LiveActivityStatus:
         self.stop_event = threading.Event()
         self.thread = None
         self.start_time = None
+        self.is_tty = sys.stdout.isatty()
 
     def _spin(self):
         spinner = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
@@ -324,15 +391,20 @@ class LiveActivityStatus:
             elapsed = int(time.time() - self.start_time)
             mins, secs = divmod(elapsed, 60)
             time_str = f"{mins:02d}:{secs:02d}"
-            sys.stdout.write(f"\r  {next(spinner)} [{time_str} elapsed] {self.message}   ")
-            sys.stdout.flush()
+            if self.is_tty:
+                sys.stdout.write(f"\r  {next(spinner)} [{time_str} elapsed] {self.message}   ")
+                sys.stdout.flush()
             time.sleep(0.15)
-        sys.stdout.write("\r" + " " * 80 + "\r")
-        sys.stdout.flush()
+
+        if self.is_tty:
+            sys.stdout.write("\r" + " " * 80 + "\r")
+            sys.stdout.flush()
 
     def __enter__(self):
         self.start_time = time.time()
         self.stop_event.clear()
+        if not self.is_tty:
+            print(f"  ▶ {self.message}...")
         self.thread = threading.Thread(target=self._spin, daemon=True)
         self.thread.start()
         return self
@@ -351,7 +423,7 @@ class LiveActivityStatus:
 # ---------------------------------------------------------------------------
 
 def query_local_vlm(image_path: Path, url: str, model: str, max_words: int = 5) -> str:
-    """Send cropped image to local LLM / VLM endpoint for a 5-word description."""
+    """Send cropped image to local LLM / VLM endpoint for a concise description with diagnostic error reporting."""
     try:
         with open(image_path, "rb") as f:
             b64_data = base64.b64encode(f.read()).decode("utf-8")
@@ -394,7 +466,8 @@ def query_local_vlm(image_path: Path, url: str, model: str, max_words: int = 5) 
             if len(words) > max_words:
                 caption = " ".join(words[:max_words])
             return caption
-    except Exception:
+    except Exception as e:
+        print(f"\n  ⚠️ Local VLM warning ({e}). Falling back to standard alt-text.", file=sys.stderr)
         return "RPG Illustration"
 
 
@@ -408,7 +481,7 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
         vlm_opts = VlmPipelineOptions()
 
         use_mlx = False
-        if args.device in ("mps", "auto"):
+        if args.device in ("mps", "auto") and sys.platform == "darwin":
             try:
                 import mlx.core
                 use_mlx = True
@@ -420,8 +493,9 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
         else:
             vlm_opts.vlm_options = vlm_model_specs.GRANITEDOCLING_TRANSFORMERS
 
+        # Clean cross-platform accelerator device handling
         vlm_opts.accelerator_options = AcceleratorOptions(
-            device=args.device if args.device != "auto" else "mps",
+            device=args.device,
             num_threads=args.threads
         )
         vlm_opts.generate_picture_images = not args.no_images
@@ -475,8 +549,6 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
             lang=["eng"],
             force_full_page_ocr=args.force_ocr
         )
-    elif args.ocr == "local":
-        opts.do_ocr = False
 
     if args.table_mode == "none":
         opts.do_table_structure = False
@@ -509,7 +581,7 @@ def build_converter(args: argparse.Namespace) -> DocumentConverter:
 # ---------------------------------------------------------------------------
 
 def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
-    """Walk user through exact custom numbered prompts with preset management."""
+    """Walk user through interactive configuration prompts with preset support and validation."""
     print("=" * 60)
     print("             RPG2MD - Interactive Setup Wizard              ")
     print("=" * 60)
@@ -591,7 +663,7 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
         args.scale = 1.0
         args.no_images = False
     elif scale_choice == 4:
-        args.scale = float(prompt_text("Enter Custom Scale Factor", "3.0", prompt_prefix="   ↳"))
+        args.scale = prompt_float("Enter Custom Scale Factor", 3.0, prompt_prefix="   ↳")
         args.no_images = False
     elif scale_choice == 5:
         args.no_images = True
@@ -615,7 +687,7 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
             args.vlm = "local"
             args.vlm_url = prompt_text("Local VLM Endpoint URL (e.g. http://127.0.0.1:8888/v1)", args.vlm_url, prompt_prefix="       ↳")
             args.vlm_model = prompt_text("Local Model ID (e.g. Qwen2.5-VL-7B-Instruct-GGUF)", args.vlm_model, prompt_prefix="       ↳")
-            args.vlm_words = int(prompt_text("Max Words per Alt-Text", "5", prompt_prefix="       ↳"))
+            args.vlm_words = prompt_int("Max Words per Alt-Text", 5, prompt_prefix="       ↳")
         elif vlm_choice == 3:
             args.vlm = "none"
     else:
@@ -630,17 +702,13 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
                 "Docling Default (Built-in RapidOCR; good for majority of PDFs)",
                 "Apple Vision Framework (Neural Engine; better OCR accuracy)",
                 "EasyOCR (Built-in PyTorch; best for legacy PDFs/scans)",
-                "Local LLM via Endpoint (e.g. DeepSeek-OCR)"
+                "Tesseract OCR (Open source OCR engine)"
             ],
             default_idx=1,
             prompt_label="Choice [DEFAULT=1]: "
         )
-        ocr_map = {1: "none", 2: "docling", 3: "apple", 4: "easyocr", 5: "local"}
+        ocr_map = {1: "none", 2: "docling", 3: "apple", 4: "easyocr", 5: "tesseract"}
         args.ocr = ocr_map[ocr_choice]
-
-        if args.ocr == "local":
-            args.ocr_url = prompt_text("Local OCR Endpoint URL (e.g. http://127.0.0.1:8888/v1)", args.ocr_url, prompt_prefix="       ↳")
-            args.ocr_model = prompt_text("Local OCR Model ID (e.g. deepseek-ocr-2)", args.ocr_model, prompt_prefix="       ↳")
     else:
         args.ocr = "none"
 
@@ -677,8 +745,14 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
         if args.pipeline == "modular" and args.ocr != "none":
             args.force_ocr = prompt_yn("Force full-page OCR across all pages?", default_yes=False)
 
-        page_range_input = prompt_text("Page Range (e.g. '1-10', '5', or Enter for All)", "all")
-        args.pages = page_range_input if page_range_input.lower() != "all" else None
+        while True:
+            page_range_input = prompt_text("Page Range (e.g. '1-10', '5', or Enter for All)", "all")
+            try:
+                parse_page_range(page_range_input)
+                args.pages = page_range_input if page_range_input.lower() != "all" else None
+                break
+            except ValueError as e:
+                print(f"  ⚠️ {e} Please try again.")
 
         if args.pipeline == "modular":
             table_choice = prompt_choice_custom(
@@ -706,14 +780,14 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
         args.device = {1: "auto", 2: "mps", 3: "cpu"}[device_choice]
 
         optimal_threads = get_optimal_threads()
-        thread_input = input(f"\nWorker CPU Threads [Auto Detected={optimal_threads}]: ").strip()
-        args.threads = int(thread_input) if (thread_input and thread_input.isdigit()) else optimal_threads
+        args.threads = prompt_int("Worker CPU Threads", optimal_threads, prompt_prefix=f"[Auto Detected={optimal_threads}]")
 
     # 7. Save Settings as Preset Option
     save_preset_choice = prompt_yn("\nSave these settings as a reusable preset?", default_yes=False)
     if save_preset_choice:
         preset_name = prompt_text("Enter Preset Name", "my_preset", prompt_prefix="   ↳")
-        saved_path = save_preset(preset_name, args, presets_dir)
+        preset_desc = prompt_text("Enter Optional Description", "", prompt_prefix="   ↳")
+        saved_path = save_preset(preset_name, args, presets_dir, description=preset_desc)
         print(f"  ✔ Preset saved as 'presets/{saved_path.name}'")
 
     # 8. Final Confirmation: Overwrite
@@ -750,9 +824,17 @@ def postprocess_assets_and_links(
     content = md_path.read_text(encoding="utf-8")
     target_assets_dir.mkdir(parents=True, exist_ok=True)
 
-    raw_images = sorted(list(raw_assets_dir.glob("*.png")) + list(raw_assets_dir.glob("*.jpg")))
+    # Collect all image formats generated by Docling
+    supported_extensions = ("*.png", "*.jpg", "*.jpeg", "*.webp")
+    raw_images = []
+    for ext in supported_extensions:
+        raw_images.extend(raw_assets_dir.glob(ext))
+    raw_images.sort()
+
     if not raw_images:
         return 0
+
+    raw_images_by_name = {img.name: img for img in raw_images}
 
     image_counter = 1
     heading_counters: Dict[str, int] = {}
@@ -766,23 +848,23 @@ def postprocess_assets_and_links(
         if heading_match:
             current_heading = slugify(heading_match.group(2))
 
-        img_match = re.search(r'!\[(.*?)\]\(([^)]+)\)', line)
-        if img_match:
+        img_matches = re.finditer(r'!\[(.*?)\]\(([^)]+)\)', line)
+        for img_match in img_matches:
             raw_target = img_match.group(2)
-            for raw_img in raw_images:
-                if raw_img.name in raw_target:
-                    if raw_img.name not in raw_to_new_name:
+            for raw_name, raw_img in raw_images_by_name.items():
+                if raw_name in raw_target:
+                    if raw_name not in raw_to_new_name:
                         if naming_scheme == "heading":
                             heading_counters[current_heading] = heading_counters.get(current_heading, 0) + 1
                             count_val = heading_counters[current_heading]
-                            clean_name = f"{current_heading}_{count_val:03d}.png"
+                            clean_name = f"{current_heading}_{count_val:03d}{raw_img.suffix}"
                         elif naming_scheme == "custom":
-                            clean_name = f"{custom_prefix}_{image_counter:03d}.png"
+                            clean_name = f"{custom_prefix}_{image_counter:03d}{raw_img.suffix}"
                         else:
-                            clean_name = f"img_{image_counter:03d}.png"
+                            clean_name = f"img_{image_counter:03d}{raw_img.suffix}"
 
                         rel_link = f"_assets/{clean_name}"
-                        raw_to_new_name[raw_img.name] = (clean_name, rel_link)
+                        raw_to_new_name[raw_name] = (clean_name, rel_link)
                         image_counter += 1
                     break
 
@@ -790,7 +872,7 @@ def postprocess_assets_and_links(
         if raw_img.name in raw_to_new_name:
             clean_name, rel_link = raw_to_new_name[raw_img.name]
         else:
-            clean_name = f"img_{image_counter:03d}.png"
+            clean_name = f"img_{image_counter:03d}{raw_img.suffix}"
             rel_link = f"_assets/{clean_name}"
             image_counter += 1
 
@@ -799,8 +881,9 @@ def postprocess_assets_and_links(
             raw_img.replace(dest_img_path)
 
         if vlm_mode == "local":
-            sys.stdout.write(f"\r  ↳ [Image {idx}/{len(raw_images)}] Generating VLM alt-text for '{clean_name}'...   ")
-            sys.stdout.flush()
+            if sys.stdout.isatty():
+                sys.stdout.write(f"\r  ↳ [Image {idx}/{len(raw_images)}] Generating VLM alt-text for '{clean_name}'...   ")
+                sys.stdout.flush()
             alt_text = query_local_vlm(dest_img_path, vlm_url, vlm_model, vlm_words)
         else:
             alt_text = "RPG Illustration"
@@ -812,7 +895,7 @@ def postprocess_assets_and_links(
             content
         )
 
-    if vlm_mode == "local":
+    if vlm_mode == "local" and sys.stdout.isatty():
         sys.stdout.write("\r" + " " * 80 + "\r")
         sys.stdout.flush()
 
@@ -851,7 +934,12 @@ def convert_single_pdf(
     temp_raw_assets = output_dir / f"_temp_assets_{doc_stem}"
     temp_raw_assets.mkdir(parents=True, exist_ok=True)
 
-    page_range = parse_page_range(getattr(args, "pages", None))
+    try:
+        page_range = parse_page_range(getattr(args, "pages", None))
+    except ValueError as e:
+        print(f"  ❌ Error parsing page range: {e}", file=sys.stderr)
+        return False
+
     pipeline_label = "IBM Granite Docling VLM (258M)" if args.pipeline in ("vlm", "granite") else "Modular Pipeline"
 
     try:
@@ -887,9 +975,9 @@ def convert_single_pdf(
         elapsed = time.time() - start_time
         processed_page_count = doc.num_pages() if hasattr(doc, "num_pages") else (total_pages or "N/A")
         print(f"  ✔ Finished '{pdf_path.name}' in {elapsed:.1f}s | Pages: {processed_page_count} | Images: {img_count}")
-        print(f"  📁 Project  : {doc_project_dir.relative_to(Path.cwd()) if doc_project_dir.is_relative_to(Path.cwd()) else doc_project_dir}/")
-        print(f"  📄 Markdown : {out_md.relative_to(Path.cwd()) if out_md.is_relative_to(Path.cwd()) else out_md}")
-        print(f"  🖼️  Assets   : {target_assets.relative_to(Path.cwd()) if target_assets.is_relative_to(Path.cwd()) else target_assets}/")
+        print(f"  📁 Project  : {doc_project_dir.relative_to(BASE_DIR) if doc_project_dir.is_relative_to(BASE_DIR) else doc_project_dir}/")
+        print(f"  📄 Markdown : {out_md.relative_to(BASE_DIR) if out_md.is_relative_to(BASE_DIR) else out_md}")
+        print(f"  🖼️  Assets   : {target_assets.relative_to(BASE_DIR) if target_assets.is_relative_to(BASE_DIR) else target_assets}/")
         return True
 
     except Exception as e:
@@ -904,11 +992,12 @@ def main():
     optimal_threads = get_optimal_threads()
 
     parser = argparse.ArgumentParser(
-        description="Convert RPG PDFs from _input to GitHub-flavored Markdown in _output with high-res assets & VLM alt-text.",
+        description=f"RPG2MD v{__version__} - Convert RPG PDFs from _input to GitHub-flavored Markdown in _output.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
     # General & Wizard
+    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("-i", "--interactive", action="store_true", help="Launch interactive numbered setup wizard")
     parser.add_argument("--preset", type=str, default=None, help="Load conversion settings from a named preset in presets/")
     parser.add_argument("--download-models", action="store_true", help="Download all built-in AI models to local cache and exit")
@@ -932,9 +1021,7 @@ def main():
     parser.add_argument("--vlm-words", type=int, default=5, help="Max words for AI image description")
 
     # OCR Engines (Modular Pipeline)
-    parser.add_argument("--ocr", choices=["none", "docling", "apple", "easyocr", "tesseract", "local"], default="none", help="OCR backend engine")
-    parser.add_argument("--ocr-url", type=str, default="http://127.0.0.1:8888/v1", help="Local OCR API URL")
-    parser.add_argument("--ocr-model", type=str, default="deepseek-ocr-2", help="Local OCR Model Name")
+    parser.add_argument("--ocr", choices=["none", "docling", "apple", "easyocr", "tesseract"], default="none", help="OCR backend engine")
     parser.add_argument("--ocr-scale", type=float, default=3.0, help="Raster upscaling factor before OCR")
     parser.add_argument("--force-ocr", action="store_true", help="Force full-page OCR across all pages")
 
@@ -944,7 +1031,7 @@ def main():
     parser.add_argument("--no-headings", action="store_true", help="Disable automatic heading hierarchy (#, ##, ###)")
 
     # Performance
-    parser.add_argument("--device", choices=["auto", "mps", "cpu"], default="auto", help="Compute accelerator device")
+    parser.add_argument("--device", choices=["auto", "mps", "cpu", "cuda"], default="auto", help="Compute accelerator device")
     parser.add_argument("--threads", type=int, default=optimal_threads, help="Number of CPU worker threads")
 
     # Offline download flag handler
@@ -952,16 +1039,19 @@ def main():
         download_all_builtin_models()
         sys.exit(0)
 
-    # Load preset if passed via CLI
+    # Preset loading handler before parsing
     raw_args = sys.argv[1:]
     if "--preset" in raw_args:
-        p_idx = raw_args.index("--preset")
-        if p_idx + 1 < len(raw_args):
-            p_name = raw_args[p_idx + 1]
-            p_file = get_presets_dir() / (f"{p_name}.json" if not p_name.endswith(".json") else p_name)
-            temp_ns = parser.parse_args()
-            temp_ns = load_preset_file(p_file, temp_ns)
-            parser.set_defaults(**vars(temp_ns))
+        try:
+            p_idx = raw_args.index("--preset")
+            if p_idx + 1 < len(raw_args):
+                p_name = raw_args[p_idx + 1]
+                p_file = get_presets_dir() / (f"{p_name}.json" if not p_name.endswith(".json") else p_name)
+                temp_ns = argparse.Namespace()
+                temp_ns = load_preset_file(p_file, temp_ns)
+                parser.set_defaults(**vars(temp_ns))
+        except Exception as e:
+            print(f"Warning: Could not pre-load preset: {e}", file=sys.stderr)
 
     # Wizard-First UX: If no arguments were passed, automatically launch the interactive wizard
     if len(sys.argv) == 1:
@@ -969,13 +1059,20 @@ def main():
     else:
         args = parser.parse_args()
 
+    # Validate page range argument if provided via CLI
+    if args.pages:
+        try:
+            parse_page_range(args.pages)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
     # Launch wizard if requested
     if args.interactive:
         args = run_interactive_wizard(args)
 
-    base_dir = Path.cwd()
-    input_dir = base_dir / "_input"
-    output_dir = base_dir / "_output"
+    input_dir = BASE_DIR / "_input"
+    output_dir = BASE_DIR / "_output"
 
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -997,7 +1094,7 @@ def main():
     pipeline_label = "IBM Granite Docling VLM (258M)" if args.pipeline in ("vlm", "granite") else "Modular Pipeline"
 
     print("=" * 60)
-    print("           RPG2MD - PDF to Markdown Batch Converter          ")
+    print(f"      RPG2MD v{__version__} - PDF to Markdown Batch Converter     ")
     print("=" * 60)
     print(f"📁 Input Directory  : {input_dir.name}/ ({len(pdf_files)} PDF{'s' if len(pdf_files) > 1 else ''} found)")
     print(f"📁 Output Directory : {output_dir.name}/")
