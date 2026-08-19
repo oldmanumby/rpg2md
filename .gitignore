@@ -31,3 +31,6 @@ _input/*
 !_input/.gitkeep
 _output/*
 !_output/.gitkeep
+
+# Custom
+.notes/
