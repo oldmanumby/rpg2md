@@ -3,23 +3,41 @@
 rpg2md.py - RPG PDF to GitHub-Flavored Markdown Converter
 Powered by Docling v2, IBM Granite Docling VLM, Apple Vision, and Local VLMs.
 
-Converts tabletop RPG PDFs in `_input/` to clean Markdown in `_output/`,
-extracting high-res images into `_output/<DocName>/` with AI alt-text.
+Converts tabletop RPG PDFs in `_input/` to clean Markdown in `_output/<DocName>/`,
+extracting high-res images into `_output/<DocName>/_assets/` with AI alt-text.
 """
+
+import os
+import sys
+
+# Silence noisy PyTorch Dynamo, C++ graph tracing, and Hugging Face warnings before imports
+os.environ["TORCHDYNAMO_DISABLE"] = "1"
+os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["PYTHONWARNINGS"] = "ignore"
 
 import argparse
 import base64
+import contextlib
 import itertools
 import json
-import os
+import logging
 import re
-import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# Suppress Python warnings & library logs
+warnings.filterwarnings("ignore")
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("torch").setLevel(logging.ERROR)
+logging.getLogger("docling").setLevel(logging.ERROR)
+logging.getLogger("urllib3").setLevel(logging.ERROR)
 
 # Docling Imports
 from docling.datamodel import vlm_model_specs
@@ -50,6 +68,18 @@ def get_optimal_threads() -> int:
     """Detect available CPU cores and calculate optimal worker threads."""
     cores = os.cpu_count() or 4
     return max(1, cores - 2) if cores > 4 else cores
+
+
+def get_pdf_page_count(pdf_path: Path) -> int:
+    """Quickly read total page count of a PDF file using pypdfium2."""
+    try:
+        import pypdfium2
+        doc = pypdfium2.PdfDocument(str(pdf_path))
+        count = len(doc)
+        doc.close()
+        return count
+    except Exception:
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +274,7 @@ def prompt_yn(title: str, default_yes: bool = True) -> bool:
 
 
 def slugify(text: str, max_length: int = 35) -> str:
-    """Convert any heading text (chapters, monsters, spells, rules, appendices) into a clean snake_case filename slug."""
+    """Convert any heading text into a clean snake_case filename slug."""
     text = re.sub(r'&[a-zA-Z0-9#]+;', '', text)
     text = re.sub(r'[#*_`\[\]()\'"<>:?,.!/\\|~+={}$^]', '', text)
     text = re.sub(r'[-\s]+', '_', text).strip('_').lower()
@@ -809,7 +839,9 @@ def convert_single_pdf(
         print(f"  ⏭  Skipping '{pdf_path.name}' (already converted. Use --overwrite to re-process).")
         return True
 
-    print(f"\n▶ Processing: {pdf_path.name}")
+    total_pages = get_pdf_page_count(pdf_path)
+    page_info = f" ({total_pages} pages)" if total_pages > 0 else ""
+    print(f"\n▶ Processing: {pdf_path.name}{page_info}")
     start_time = time.time()
 
     doc_project_dir.mkdir(parents=True, exist_ok=True)
@@ -823,7 +855,7 @@ def convert_single_pdf(
     pipeline_label = "IBM Granite Docling VLM (258M)" if args.pipeline in ("vlm", "granite") else "Modular Pipeline"
 
     try:
-        with LiveActivityStatus(f"Converting with {pipeline_label} (Neural layout & table recognition)..."):
+        with LiveActivityStatus(f"Converting with {pipeline_label} (Neural Layout & Tables)..."):
             result = converter.convert(str(pdf_path), page_range=page_range)
             doc = result.document
 
@@ -853,8 +885,8 @@ def convert_single_pdf(
             temp_raw_assets.rmdir()
 
         elapsed = time.time() - start_time
-        page_count = doc.num_pages() if hasattr(doc, "num_pages") else "N/A"
-        print(f"  ✔ Finished '{pdf_path.name}' in {elapsed:.1f}s | Pages: {page_count} | Images: {img_count}")
+        processed_page_count = doc.num_pages() if hasattr(doc, "num_pages") else (total_pages or "N/A")
+        print(f"  ✔ Finished '{pdf_path.name}' in {elapsed:.1f}s | Pages: {processed_page_count} | Images: {img_count}")
         print(f"  📁 Project  : {doc_project_dir.relative_to(Path.cwd()) if doc_project_dir.is_relative_to(Path.cwd()) else doc_project_dir}/")
         print(f"  📄 Markdown : {out_md.relative_to(Path.cwd()) if out_md.is_relative_to(Path.cwd()) else out_md}")
         print(f"  🖼️  Assets   : {target_assets.relative_to(Path.cwd()) if target_assets.is_relative_to(Path.cwd()) else target_assets}/")

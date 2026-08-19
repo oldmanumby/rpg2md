@@ -5,6 +5,14 @@ All notable changes to the RPG2MD project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-08-19
+
+### Added
+- Added pre-conversion PDF page count detection using `pypdfium2` (`▶ Processing: <document>.pdf (XX pages)`).
+
+### Fixed
+- Fixed PyTorch Dynamo and Hugging Face warning pollution (`Graph break: from user code at...` and `generation_config`) by enforcing early environment suppression (`TORCHDYNAMO_DISABLE=1`, `TORCH_CPP_LOG_LEVEL=ERROR`), preserving a clean single-line live activity timer.
+
 ## [1.3.1] - 2026-08-19
 
 ### Added
