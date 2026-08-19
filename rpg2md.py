@@ -706,7 +706,6 @@ def postprocess_assets_and_links(
     md_path: Path,
     raw_assets_dir: Path,
     target_assets_dir: Path,
-    doc_stem: str,
     naming_scheme: str,
     custom_prefix: str,
     vlm_mode: str,
@@ -714,7 +713,7 @@ def postprocess_assets_and_links(
     vlm_model: str,
     vlm_words: int
 ) -> int:
-    """Isolate assets into _output/<DocName>/ and normalize links in markdown."""
+    """Isolate assets into _output/<DocName>/_assets/ and normalize links in markdown."""
     if not md_path.exists():
         return 0
 
@@ -752,7 +751,7 @@ def postprocess_assets_and_links(
                         else:
                             clean_name = f"img_{image_counter:03d}.png"
 
-                        rel_link = f"{doc_stem}/{clean_name}"
+                        rel_link = f"_assets/{clean_name}"
                         raw_to_new_name[raw_img.name] = (clean_name, rel_link)
                         image_counter += 1
                     break
@@ -762,7 +761,7 @@ def postprocess_assets_and_links(
             clean_name, rel_link = raw_to_new_name[raw_img.name]
         else:
             clean_name = f"img_{image_counter:03d}.png"
-            rel_link = f"{doc_stem}/{clean_name}"
+            rel_link = f"_assets/{clean_name}"
             image_counter += 1
 
         dest_img_path = target_assets_dir / clean_name
@@ -801,9 +800,10 @@ def convert_single_pdf(
     converter: DocumentConverter,
     args: argparse.Namespace
 ) -> bool:
-    """Convert one PDF document into GitHub-flavored Markdown and isolated assets."""
+    """Convert one PDF document into a self-contained project folder with Markdown and _assets/."""
     doc_stem = pdf_path.stem
-    out_md = output_dir / f"{doc_stem}.md"
+    doc_project_dir = output_dir / doc_stem
+    out_md = doc_project_dir / f"{doc_stem}.md"
 
     if out_md.exists() and not args.overwrite:
         print(f"  ⏭  Skipping '{pdf_path.name}' (already converted. Use --overwrite to re-process).")
@@ -812,7 +812,10 @@ def convert_single_pdf(
     print(f"\n▶ Processing: {pdf_path.name}")
     start_time = time.time()
 
-    target_assets = output_dir / doc_stem
+    doc_project_dir.mkdir(parents=True, exist_ok=True)
+    target_assets = doc_project_dir / "_assets"
+    target_assets.mkdir(parents=True, exist_ok=True)
+
     temp_raw_assets = output_dir / f"_temp_assets_{doc_stem}"
     temp_raw_assets.mkdir(parents=True, exist_ok=True)
 
@@ -836,7 +839,6 @@ def convert_single_pdf(
                 md_path=out_md,
                 raw_assets_dir=temp_raw_assets,
                 target_assets_dir=target_assets,
-                doc_stem=doc_stem,
                 naming_scheme=getattr(args, "naming_scheme", "sequential"),
                 custom_prefix=getattr(args, "custom_prefix", "img"),
                 vlm_mode=args.vlm,
@@ -853,6 +855,7 @@ def convert_single_pdf(
         elapsed = time.time() - start_time
         page_count = doc.num_pages() if hasattr(doc, "num_pages") else "N/A"
         print(f"  ✔ Finished '{pdf_path.name}' in {elapsed:.1f}s | Pages: {page_count} | Images: {img_count}")
+        print(f"  📁 Project  : {doc_project_dir.relative_to(Path.cwd()) if doc_project_dir.is_relative_to(Path.cwd()) else doc_project_dir}/")
         print(f"  📄 Markdown : {out_md.relative_to(Path.cwd()) if out_md.is_relative_to(Path.cwd()) else out_md}")
         print(f"  🖼️  Assets   : {target_assets.relative_to(Path.cwd()) if target_assets.is_relative_to(Path.cwd()) else target_assets}/")
         return True

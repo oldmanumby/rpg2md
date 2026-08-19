@@ -8,11 +8,11 @@
 **RPG2MD** is an automated conversion tool built to transform tabletop roleplaying game (TTRPG) rulebooks, adventure modules, and supplements into clean, structured **GitHub-flavored Markdown**.
 
 Powered by **Docling v2** and **IBM Granite Docling (258M VLM)**, it solves the most common PDF conversion hurdles in tabletop gaming books:
+- **Self-Contained Book Folders**: Every converted PDF generates its own dedicated project folder (`_output/<DocName>/`) with `_assets/` and `<DocName>.md` for 100% portability (ideal for Obsidian, Zed, static site generators, and web publishing).
 - **Dual Pipeline Architecture**: Choose between the blazing-fast **Modular Pipeline** (for modern digital rulebooks) or the end-to-end **VLM Passover** via IBM Granite Docling 258M (for tricky scans, warped pages, and complex visual sidebars).
 - **Preset Management System**: Save your customized wizard settings as named `.json` presets in `./presets/` and recall them instantly via wizard or CLI flag.
 - **Automated Model Preflight**: Built-in models (**Granite Docling 258M**, **SmolVLM**, **EasyOCR**) are automatically verified in `~/.cache/huggingface/hub/` and downloaded on-demand with visual status rather than pausing silently.
 - **Multi-Column Layout Preservation**: Accurately tracks reading flow across 2-column and 3-column layouts without jumping across gutters.
-- **Isolated Asset Extraction**: Crops battle maps, character portraits, item sketches, and diagrams into clean, high-resolution standalone images ($1.0\times$ to $4.0\times$ retina scale) inside dedicated folders: `_output/<DocName>/`.
 - **Dynamic Image Naming**: Automatically names extracted images sequentially (`img_001.png`), with custom prefixes (`dnd5e_001.png`), or based on the **preceding section heading** (`combat_rules_001.png`, `ancient_red_dragon_001.png`).
 - **AI-Powered Image Descriptions (Alt-Text)**: Automatically generates concise 5-word Markdown image alt-text using built-in local models (**SmolVLM-256M**) or local Vision LLM endpoints (**Qwen2.5-VL**, **DeepSeek-OCR-2**).
 - **Multi-Engine OCR**: Seamlessly switch between Native Digital Text (0% error rate), **Apple Vision** (M2/M3 Neural Engine), **Docling RapidOCR**, **EasyOCR** (for vintage/weathered scans), and Local Neural Endpoints.
@@ -24,19 +24,20 @@ Powered by **Docling v2** and **IBM Granite Docling (258M VLM)**, it solves the 
 
 ```text
 rpg2md/
-├── _input/              # Drop your PDF files here
-├── _output/             # Generated .md files and asset directories
-│   ├── <DocName>.md     # Converted Markdown document
-│   └── <DocName>/       # Isolated per-document asset folder (img_001.png, ...)
-├── presets/             # Saved conversion presets (*.json)
+├── _input/                   # Drop your PDF files here
+├── _output/                  # Generated self-contained project folders
+│   └── <DocName>/            # Dedicated book project folder
+│       ├── _assets/          # Isolated book assets (img_001.png, combat_001.png, ...)
+│       └── <DocName>.md      # Converted Markdown document
+├── presets/                  # Saved conversion presets (*.json)
 │   ├── digital_rulebook.json
 │   └── vintage_scans.json
-├── .venv/               # Virtual environment
-├── requirements.txt     # Project dependencies
-├── rpg2md.py            # Main conversion script
-├── LICENSE              # MIT License
-├── CHANGELOG.md         # Release history
-└── README.md            # Documentation & usage guide
+├── .venv/                    # Virtual environment
+├── requirements.txt          # Project dependencies
+├── rpg2md.py                 # Main conversion script
+├── LICENSE                   # MIT License
+├── CHANGELOG.md              # Release history
+└── README.md                 # Documentation & usage guide
 ```
 
 ---

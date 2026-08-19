@@ -5,6 +5,15 @@ All notable changes to the RPG2MD project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-08-19
+
+### Added
+- Standardized output structure into self-contained project folders: each PDF converts to `_output/<DocName>/<DocName>.md` with assets in `_output/<DocName>/_assets/`.
+- Updated Markdown image links to use portable relative paths (`![Alt Text](_assets/img_001.png)`).
+
+### Fixed
+- Fixed duplicate preset list output when selecting `[3] Load a Saved Preset` in the interactive wizard.
+
 ## [1.3.0] - 2026-08-18
 
 ### Added
@@ -28,7 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added **Wizard-First Execution**: Running `rpg2md.py` with no command-line arguments now automatically launches the Interactive Setup Wizard.
 - Added active **Live Heartbeat Activity Spinner** with real-time elapsed timer (`[MM:SS elapsed]`) and sub-progress indicators for image captioning.
 - Added dynamic CPU core topology auto-detection (`Worker CPU Threads [Auto Detected={count}]`).
-- Standardized asset output to isolated per-document directories (`_output/<DocName>/`).
 
 ### Fixed
 - Fixed Hugging Face `transformers` `generation_config` conflict deprecation warning during SmolVLM alt-text inference.
