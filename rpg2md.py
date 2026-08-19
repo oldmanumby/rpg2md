@@ -504,10 +504,6 @@ def run_interactive_wizard(args: argparse.Namespace) -> argparse.Namespace:
 
     # Handle Preset Loading
     if mode_choice == 3 and available_presets:
-        print("\nAvailable Presets:")
-        for idx, p_path in enumerate(available_presets, 1):
-            print(f"[{idx}] {p_path.stem}")
-
         p_choice = prompt_choice_custom(
             "Select Preset to Load:",
             [p.stem for p in available_presets],
