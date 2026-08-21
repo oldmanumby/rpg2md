@@ -31,7 +31,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-__version__ = "1.3.4"
+__version__ = "1.3.5"
 
 # Base directory anchoring (resolves reliably regardless of current working directory)
 BASE_DIR = Path(__file__).resolve().parent
