@@ -50,9 +50,16 @@ rpg2md/
 - **Python 3.10 or higher** (Python 3.12 recommended).
 - Git installed on your system.
 
+> [!NOTE]
+> `pip install -r requirements.txt` installs everything needed for all conversion modes, including the OCR engines. Be aware that **EasyOCR pulls in PyTorch (~2 GB)** even if you never use OCR. If you only need digital-text PDFs and want a lighter install, you can skip it by installing Docling alone:
+> ```bash
+> pip install "docling>=2.120.0"
+> ```
+> Optional extras: **Tesseract OCR** requires the [Tesseract engine](https://github.com/tesseract-ocr/tesseract) installed at the system level (e.g. `brew install tesseract` on macOS or `apt install tesseract-ocr` on Debian/Ubuntu); **Apple Silicon MLX acceleration** can be added afterwards with `pip install mlx-vlm`.
+
 ### 2. Clone the Repository
 ```bash
-git clone https://github.com/your-username/rpg2md.git
+git clone https://github.com/your-github-username/rpg2md.git
 cd rpg2md
 ```
 
@@ -230,14 +237,14 @@ Run directly from terminal without prompts:
 | Flag | Type / Choices | Default | Description |
 | :--- | :--- | :---: | :--- |
 | `-i`, `--interactive` | *flag* | `False` | Explicitly launch the interactive wizard. |
-| `-v`, `--version` | *flag* | `1.3.3` | Show program version number and exit. |
+| `-v`, `--version` | *flag* | — | Show program version number and exit. |
 | `--preset <name>` | *string* | `None` | Load settings from a named preset in `./presets/`. |
 | `--download-models` | *flag* | `False` | Download all built-in AI models to local cache and exit. |
 | `--file <filename>` | *string* | `None` | Process only a specific PDF in `_input/`. |
 | `--pages <range>` | *string* | `None` | Page range to convert (e.g. `--pages 1-10` or `--pages 5`). |
 | `--pipeline` | `modular` \| `granite` \| `vlm` | `modular` | `modular` uses fast vector parsing + TableFormer; `granite` uses IBM Granite Docling 258M VLM. |
 | `--overwrite` | *flag* | `False` | Overwrite existing `.md` files and asset folders. |
-| `--scale <float>` | *float* | `3.0` | Image extraction resolution scale ($1.0\times$ to $4.0\times$). |
+| `--scale <float>` | *float* | `3.0` | Image extraction resolution scale (1.0× to 4.0×). |
 | `--no-images` | *flag* | `False` | Disable image/map extraction entirely (text and tables only). |
 | `--naming-scheme` | `sequential` \| `custom` \| `heading` | `sequential` | `heading` dynamically names images after the preceding section header (e.g. `combat_rules_001.png`). |
 | `--custom-prefix` | *string* | `img` | Custom prefix if `--naming-scheme custom` is selected. |
@@ -315,7 +322,7 @@ Names all artwork after the section it appears under (e.g. `combat_rules_001.png
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/your-username/rpg2md/issues).
+Contributions, issues, and feature requests are welcome! Feel free to open an issue on the project's GitHub repository once published.
 
 ---
 
