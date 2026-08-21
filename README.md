@@ -1,4 +1,4 @@
-# RPG2MD — RPG PDF to GitHub-Flavored Markdown Converter
+# RPG2MD — RPG PDF to Markdown Converter
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Docling v2](https://img.shields.io/badge/Docling-v2.120%2B-green.svg)](https://github.com/docling-project/docling)
