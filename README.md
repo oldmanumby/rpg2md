@@ -59,7 +59,7 @@ rpg2md/
 
 ### 2. Clone the Repository
 ```bash
-git clone https://github.com/your-github-username/rpg2md.git
+git clone https://github.com/your-username/rpg2md.git
 cd rpg2md
 ```
 
@@ -322,7 +322,7 @@ Names all artwork after the section it appears under (e.g. `combat_rules_001.png
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome! Feel free to open an issue on the project's GitHub repository once published.
+Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/your-username/rpg2md/issues).
 
 ---
 
