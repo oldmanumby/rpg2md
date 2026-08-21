@@ -868,23 +868,24 @@ def postprocess_assets_and_links(
 
         img_matches = re.finditer(r'!\[(.*?)\]\(([^)]+)\)', line)
         for img_match in img_matches:
-            raw_target = img_match.group(2)
-            for raw_name, raw_img in raw_images_by_name.items():
-                if raw_name in raw_target:
-                    if raw_name not in raw_to_new_name:
-                        if naming_scheme == "heading":
-                            heading_counters[current_heading] = heading_counters.get(current_heading, 0) + 1
-                            count_val = heading_counters[current_heading]
-                            clean_name = f"{current_heading}_{count_val:03d}{raw_img.suffix}"
-                        elif naming_scheme == "custom":
-                            clean_name = f"{custom_prefix}_{image_counter:03d}{raw_img.suffix}"
-                        else:
-                            clean_name = f"img_{image_counter:03d}{raw_img.suffix}"
+            # Match on exact basename to avoid partial matches (e.g. 'img_1.png' vs 'raw_img_10.png')
+            target_name = Path(img_match.group(2)).name
+            raw_img = raw_images_by_name.get(target_name)
+            if raw_img is not None:
+                raw_name = raw_img.name
+                if raw_name not in raw_to_new_name:
+                    if naming_scheme == "heading":
+                        heading_counters[current_heading] = heading_counters.get(current_heading, 0) + 1
+                        count_val = heading_counters[current_heading]
+                        clean_name = f"{current_heading}_{count_val:03d}{raw_img.suffix}"
+                    elif naming_scheme == "custom":
+                        clean_name = f"{custom_prefix}_{image_counter:03d}{raw_img.suffix}"
+                    else:
+                        clean_name = f"img_{image_counter:03d}{raw_img.suffix}"
 
-                        rel_link = f"_assets/{clean_name}"
-                        raw_to_new_name[raw_name] = (clean_name, rel_link)
-                        image_counter += 1
-                    break
+                    rel_link = f"_assets/{clean_name}"
+                    raw_to_new_name[raw_name] = (clean_name, rel_link)
+                    image_counter += 1
 
     for idx, raw_img in enumerate(raw_images, 1):
         if raw_img.name in raw_to_new_name:
@@ -907,9 +908,16 @@ def postprocess_assets_and_links(
             alt_text = "RPG Illustration"
 
         old_ref_pattern = re.escape(raw_img.name)
+        def _replace_alt(m):
+            existing = (m.group(1) or "").strip()
+            # Local VLM always supplies fresh alt-text; otherwise preserve any
+            # existing caption (e.g. Docling/SmolVLM descriptions) and only
+            # fall back to generic text when the caption is empty.
+            new_alt = alt_text if vlm_mode == "local" else (existing or alt_text)
+            return f'![{new_alt}]({rel_link})'
         content = re.sub(
             rf'!\[(.*?)\]\([^)]*{old_ref_pattern}\)',
-            lambda m: f'![{alt_text if vlm_mode == "local" else (m.group(1) or alt_text)}]({rel_link})',
+            _replace_alt,
             content
         )
 

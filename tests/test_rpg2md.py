@@ -182,6 +182,81 @@ Here is another image:
         finally:
             shutil.rmtree(temp_dir)
 
+    def test_postprocess_no_substring_false_match(self):
+        """A link to 'img_1.png' must not match asset 'raw_img_10.png'."""
+        temp_dir = Path(tempfile.mkdtemp())
+        try:
+            doc_dir = temp_dir / "TestBook"
+            doc_dir.mkdir(parents=True)
+            target_assets = doc_dir / "_assets"
+            raw_assets = temp_dir / "_raw_assets"
+            raw_assets.mkdir(parents=True)
+
+            (raw_assets / "raw_img_1.png").write_bytes(b"a")
+            (raw_assets / "raw_img_10.png").write_bytes(b"b")
+
+            md_path = doc_dir / "TestBook.md"
+            md_path.write_text(
+                "# Chapter\n![One](img_1.png)\n![Ten](raw_img_10.png)\n",
+                encoding="utf-8",
+            )
+
+            count = rpg2md.postprocess_assets_and_links(
+                md_path=md_path,
+                raw_assets_dir=raw_assets,
+                target_assets_dir=target_assets,
+                naming_scheme="sequential",
+                custom_prefix="img",
+                vlm_mode="none",
+                vlm_url="http://127.0.0.1:8888/v1",
+                vlm_model="test",
+                vlm_words=5,
+            )
+
+            self.assertEqual(count, 2)
+            updated_md = md_path.read_text(encoding="utf-8")
+            # 'img_1.png' matched nothing, so it keeps its original reference;
+            # only the exact-basename match is rewritten.
+            self.assertIn("![Ten](_assets/", updated_md)
+            self.assertIn("![One](img_1.png)", updated_md)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_postprocess_preserves_existing_captions(self):
+        """Non-local VLM modes must keep existing alt-text instead of clobbering it."""
+        temp_dir = Path(tempfile.mkdtemp())
+        try:
+            doc_dir = temp_dir / "TestBook"
+            doc_dir.mkdir(parents=True)
+            target_assets = doc_dir / "_assets"
+            raw_assets = temp_dir / "_raw_assets"
+            raw_assets.mkdir(parents=True)
+
+            (raw_assets / "pic.png").write_bytes(b"x")
+
+            md_path = doc_dir / "TestBook.md"
+            md_path.write_text(
+                "# Chapter\n![SmolVLM caption here](pic.png)\n![](pic2_missing.png)\n",
+                encoding="utf-8",
+            )
+
+            rpg2md.postprocess_assets_and_links(
+                md_path=md_path,
+                raw_assets_dir=raw_assets,
+                target_assets_dir=target_assets,
+                naming_scheme="sequential",
+                custom_prefix="img",
+                vlm_mode="none",
+                vlm_url="http://127.0.0.1:8888/v1",
+                vlm_model="test",
+                vlm_words=5,
+            )
+
+            updated_md = md_path.read_text(encoding="utf-8")
+            self.assertIn("![SmolVLM caption here](_assets/img_001.png)", updated_md)
+        finally:
+            shutil.rmtree(temp_dir)
+
 
 if __name__ == "__main__":
     unittest.main()
