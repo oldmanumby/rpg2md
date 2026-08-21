@@ -322,7 +322,7 @@ Names all artwork after the section it appears under (e.g. `combat_rules_001.png
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/your-username/rpg2md/issues).
+Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/oldmanumby/rpg2md/issues).
 
 ---
 
