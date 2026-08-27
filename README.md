@@ -17,6 +17,7 @@ Powered by **Docling v2** and **IBM Granite Docling (258M VLM)**, it solves the 
 - **AI-Powered Image Descriptions (Alt-Text)**: Automatically generates concise 5-word Markdown image alt-text using built-in local models (**SmolVLM-256M**) or local Vision LLM endpoints (**Qwen2.5-VL**, **DeepSeek-OCR-2**).
 - **Multi-Engine OCR**: Seamlessly switch between Native Digital Text (0% error rate), **Apple Vision** (M2/M3 Neural Engine), **Docling RapidOCR**, **EasyOCR** (for vintage/weathered scans), and **Tesseract OCR**.
 - **Complex Table & Stat Block Parsing**: Uses IBM TableFormer and DocTags OTSL vocabulary for multi-line wrapped cells, spell progression charts, and monster stat blocks.
+- **Continuous Multi-Batch Conversion**: Interactive post-job continuation loop allows converting multiple PDFs or folders consecutively with retained or adjusted settings without restarting the script.
 
 ---
 
@@ -192,13 +193,24 @@ Save these settings as a reusable preset? (y/N):
 
 ------------------------------------------------------------
 -- Final Confirmation
-------------------------------------------------------------
+-------------------------------------------------------------
 
 Overwrite existing files in _output/? (y/N): 
 
 ============================================================
 Configuration complete! Starting conversion...
 ============================================================
+  ✔ Finished 'Rulebook.pdf' in 14.2s | Pages: 12 | Images: 8
+  📁 Project  : _output/Rulebook/
+  📄 Markdown : _output/Rulebook/Rulebook.md
+  🖼️  Assets   : _output/Rulebook/_assets/
+
+============================================================
+🎉 All done! Successfully converted 1/1 document(s) in 14.2s.
+============================================================
+
+Do you wish to run another conversion? (y/N): 
+   ↳ (If 'y'): Use the same settings? (Y/n): 
 ```
 
 ---
