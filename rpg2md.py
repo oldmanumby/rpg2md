@@ -1109,52 +1109,80 @@ def main():
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.file:
-        target_file = input_dir / args.file if not Path(args.file).is_absolute() else Path(args.file)
-        if not target_file.exists():
-            print(f"Error: Specified file not found: {target_file}", file=sys.stderr)
-            sys.exit(1)
-        pdf_files = [target_file]
-    else:
-        pdf_files = sorted(list(input_dir.glob("*.pdf")) + list(input_dir.glob("*.PDF")))
+    converter = None
 
-    if not pdf_files:
-        print(f"No PDF files found in '{input_dir.name}/'. Place PDFs there and re-run.")
-        sys.exit(0)
+    while True:
+        if args.file:
+            target_file = input_dir / args.file if not Path(args.file).is_absolute() else Path(args.file)
+            if not target_file.exists():
+                print(f"Error: Specified file not found: {target_file}", file=sys.stderr)
+                sys.exit(1)
+            pdf_files = [target_file]
+        else:
+            pdf_files = sorted(list(input_dir.glob("*.pdf")) + list(input_dir.glob("*.PDF")))
 
-    range_display = args.pages if args.pages else "All Pages"
-    pipeline_label = "IBM Granite Docling VLM (258M)" if args.pipeline in ("vlm", "granite") else "Modular Pipeline"
+        if not pdf_files:
+            print(f"No PDF files found in '{input_dir.name}/'. Place PDFs there and re-run.")
+            if not sys.stdin.isatty():
+                sys.exit(0)
+            retry_scan = prompt_yn("No PDFs found in _input/. Check again?", default_yes=True)
+            if not retry_scan:
+                sys.exit(0)
+            continue
 
-    print("=" * 60)
-    print(f"      RPG2MD v{__version__} - PDF to Markdown Batch Converter     ")
-    print("=" * 60)
-    print(f"📁 Input Directory  : {input_dir.name}/ ({len(pdf_files)} PDF{'s' if len(pdf_files) > 1 else ''} found)")
-    print(f"📁 Output Directory : {output_dir.name}/")
-    print(f"⚙️  Pipeline Engine  : {pipeline_label}")
-    print(f"📄 Page Range       : {range_display}")
-    print(f"🖼️  Image Scale      : {'None (Discarded)' if args.no_images else f'{args.scale}x'}")
-    print(f"🏷️  Naming Scheme    : {args.naming_scheme}")
-    print(f"🤖 Vision AI        : {args.vlm.upper()} ({args.vlm_words} words max alt-text)")
-    if args.pipeline == "modular":
-        print(f"🔍 OCR Engine       : {args.ocr.upper()} {'[Force Full Page]' if args.force_ocr else ''}")
-    print("=" * 60)
+        range_display = args.pages if args.pages else "All Pages"
+        pipeline_label = "IBM Granite Docling VLM (258M)" if args.pipeline in ("vlm", "granite") else "Modular Pipeline"
 
-    # Preflight check for selected built-in models
-    ensure_models_ready(args)
+        print("=" * 60)
+        print(f"      RPG2MD v{__version__} - PDF to Markdown Batch Converter     ")
+        print("=" * 60)
+        print(f"📁 Input Directory  : {input_dir.name}/ ({len(pdf_files)} PDF{'s' if len(pdf_files) > 1 else ''} found)")
+        print(f"📁 Output Directory : {output_dir.name}/")
+        print(f"⚙️  Pipeline Engine  : {pipeline_label}")
+        print(f"📄 Page Range       : {range_display}")
+        print(f"🖼️  Image Scale      : {'None (Discarded)' if args.no_images else f'{args.scale}x'}")
+        print(f"🏷️  Naming Scheme    : {args.naming_scheme}")
+        print(f"🤖 Vision AI        : {args.vlm.upper()} ({args.vlm_words} words max alt-text)")
+        if args.pipeline == "modular":
+            print(f"🔍 OCR Engine       : {args.ocr.upper()} {'[Force Full Page]' if args.force_ocr else ''}")
+        print("=" * 60)
 
-    converter = build_converter(args)
+        # Preflight check for selected built-in models
+        ensure_models_ready(args)
 
-    success_count = 0
-    total_start = time.time()
+        if converter is None:
+            converter = build_converter(args)
 
-    for pdf_path in pdf_files:
-        if convert_single_pdf(pdf_path, output_dir, converter, args):
-            success_count += 1
+        success_count = 0
+        total_start = time.time()
 
-    total_elapsed = time.time() - total_start
-    print("\n" + "=" * 60)
-    print(f"🎉 All done! Successfully converted {success_count}/{len(pdf_files)} document(s) in {total_elapsed:.1f}s.")
-    print("=" * 60)
+        for pdf_path in pdf_files:
+            if convert_single_pdf(pdf_path, output_dir, converter, args):
+                success_count += 1
+
+        total_elapsed = time.time() - total_start
+        print("\n" + "=" * 60)
+        print(f"🎉 All done! Successfully converted {success_count}/{len(pdf_files)} document(s) in {total_elapsed:.1f}s.")
+        print("=" * 60)
+
+        # Non-interactive / piped environments exit immediately
+        if not sys.stdin.isatty():
+            break
+
+        print()
+        run_another = prompt_yn("Do you wish to run another conversion?", default_yes=False)
+        if not run_another:
+            break
+
+        use_same = prompt_yn("Use the same settings?", default_yes=True)
+        if not use_same:
+            # Re-run interactive wizard with fresh settings
+            args = parser.parse_args(["-i"])
+            args = run_interactive_wizard(args)
+            converter = build_converter(args)
+        else:
+            # Reset specific file filter so subsequent runs re-scan _input/
+            args.file = None
 
 
 if __name__ == "__main__":
