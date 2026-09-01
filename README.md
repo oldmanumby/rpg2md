@@ -1,5 +1,7 @@
 # RPG2MD — RPG PDF to Markdown Converter
 
+![Rules reForged Logo](Rules-reForged.png)
+
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Docling v2](https://img.shields.io/badge/Docling-v2.120%2B-green.svg)](https://github.com/docling-project/docling)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
